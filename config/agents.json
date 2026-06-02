@@ -1,0 +1,4 @@
+{
+  "_comment": "Agent identity registry (the gateway's view). Each entry binds a cryptographic public key to an agentId and a role. Populated by `npm run enroll`. Private keys never live here — they stay in .agentzt/identities/ on the agent host.",
+  "agents": []
+}

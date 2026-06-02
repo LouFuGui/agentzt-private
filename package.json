@@ -1,0 +1,29 @@
+{
+  "name": "agentzt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero Trust for AI Agents — agentzt-client + agentzt-gateway. Agents reach enterprise model APIs and tools only through a zero-trust proxy.",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "bin": {
+    "agentzt-gateway": "src/gateway/index.ts",
+    "agentzt-client": "src/client/index.ts",
+    "agentzt": "src/cli/index.ts"
+  },
+  "scripts": {
+    "gateway": "node src/gateway/index.ts",
+    "client": "node src/client/index.ts",
+    "cli": "node src/cli/index.ts",
+    "enroll": "node src/cli/index.ts enroll",
+    "demo:agent": "node examples/demo-agent/agent.ts",
+    "demo": "node scripts/demo.ts",
+    "test": "node scripts/test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,7 @@
+# Runtime state: private keys, issued tokens, audit logs
+.agentzt/
+node_modules/
+*.log
+
+# Anthropic's copyrighted eBook — not redistributed in this repo
+Claude-eBook-Zero-Trust-for-AI-Agents-05182026.pdf

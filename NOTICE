@@ -1,0 +1,12 @@
+agentzt — Zero Trust for AI Agents
+Copyright 2026 OpenGuardrails
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This project's design is informed by Anthropic's "Zero Trust for AI Agents"
+security framework. agentzt is an independent open-source implementation and is
+not affiliated with or endorsed by Anthropic.
