@@ -8,5 +8,18 @@
     "mode": "mock",
     "anthropicBaseUrl": "https://api.anthropic.com",
     "apiKeyEnv": "AGENTZT_UPSTREAM_ANTHROPIC_KEY"
+  },
+  "guardrails": {
+    "_comment": "provider=auto uses OpenGuardrails (context-aware detection incl. indirect prompt injection) when OPENGUARDRAILS_API_KEY is set, else the local regex detector so the demo runs offline. input.mode block=reject risky prompts, flag=allow but audit, off=disabled. output.redactSecrets scrubs credential-shaped strings from responses; output.check runs a context-aware output review when the provider supports it.",
+    "provider": "auto",
+    "input": { "mode": "block" },
+    "output": { "redactSecrets": true, "check": true },
+    "openguardrails": {
+      "baseUrl": "https://api.openguardrails.com/v1",
+      "apiKeyEnv": "OPENGUARDRAILS_API_KEY",
+      "model": "OpenGuardrails-Text",
+      "timeoutMs": 5000,
+      "failOpen": false
+    }
   }
 }

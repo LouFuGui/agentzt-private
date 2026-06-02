@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { IDENTITIES_DIR, AUDIT_DIR } from '../shared/paths.ts';
 import { generateEd25519 } from '../shared/crypto.ts';
 import { loadRegistry, saveRegistry, loadPolicy } from '../shared/config.ts';
+import { verifyChain } from '../shared/audit.ts';
 import type { AgentIdentityFile, AgentRegistryEntry } from '../shared/types.ts';
 
 function flag(args: string[], name: string): string | undefined {
@@ -111,17 +112,30 @@ function cmdRoles(): void {
 }
 
 function cmdAudit(args: string[]): void {
-  const limit = Number(flag(args, '--limit') ?? '20');
   const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
   if (!existsSync(file)) {
     console.log('no audit log yet (start the gateway and make some requests).');
     return;
   }
+
+  if (args.includes('--verify')) {
+    const v = verifyChain(file);
+    if (v.ok) {
+      console.log(`audit chain OK — ${v.count} event(s), hash chain intact (tamper-evident).`);
+    } else {
+      console.error(`audit chain BROKEN at seq ${v.brokenAtSeq}: ${v.reason}`);
+      console.error(`  ${v.count} event(s) verified before the break.`);
+      process.exit(2);
+    }
+    return;
+  }
+
+  const limit = Number(flag(args, '--limit') ?? '20');
   const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
   for (const line of lines.slice(-limit)) {
     const ev = JSON.parse(line);
     const mark = ev.decision === 'allow' ? 'ALLOW' : 'DENY ';
-    console.log(`${ev.ts} ${mark} ${ev.action} ${ev.agentId ?? '-'} -> ${ev.resource}  (${ev.reason}) rid=${ev.requestId}`);
+    console.log(`#${ev.seq} ${ev.ts} ${mark} ${ev.action} ${ev.agentId ?? '-'} -> ${ev.resource}  (${ev.reason}) rid=${ev.requestId}`);
   }
 }
 

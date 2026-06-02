@@ -67,7 +67,7 @@ ANTHROPIC_BASE_URL=http://localhost:8787 npm run demo:agent
 node src/cli/index.ts audit
 ```
 
-The demo exercises five distinct controls:
+The demo exercises seven distinct controls:
 
 | Step | Call | Result | Control demonstrated |
 |------|------|--------|----------------------|
@@ -76,6 +76,8 @@ The demo exercises five distinct controls:
 | 3 | `kb.search` (in role) | ALLOW | scoped tool access |
 | 4 | `email.send` (not in role) | DENY 403 | least agency |
 | 5 | `db.query` with `DELETE …` | DENY 400 | tool parameter validation |
+| 6 | prompt with "ignore all previous instructions…" | DENY 403 | input guardrail (prompt injection) |
+| 7 | `web.fetch` of a page leaking `sk-ant-…` | ALLOW (redacted) | output guardrail (secret redaction) |
 
 ## Configuration
 
@@ -90,6 +92,41 @@ The demo exercises five distinct controls:
 
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
+
+### Guardrails (input/output) — powered by OpenGuardrails
+
+The gateway runs a **context-aware guardrail** on every model call (input) and response
+(output), configured under `guardrails` in `config/gateway.json`:
+
+- `provider: "auto"` — uses [**OpenGuardrails**](https://openguardrails.com) when
+  `OPENGUARDRAILS_API_KEY` is set, otherwise a built-in regex fallback so the demo runs
+  offline. Set `"openguardrails"` to require it, or `"local"` to force the offline detector.
+- **Input** (`input.mode`): `block` rejects risky prompts (403), `flag` allows but audits,
+  `off` disables. Because OpenGuardrails scores the **whole conversation**, it detects
+  *indirect* prompt injection — malicious instructions hidden in tool outputs or retrieved
+  web pages that were fed back into the messages — which simple pattern matching misses.
+- **Output** (`output`): `redactSecrets` scrubs credential-shaped strings (API keys, AWS
+  keys, tokens, private-key blocks) from model and tool responses before they reach the
+  agent; `check` runs a context-aware output review (OpenGuardrails may return a redacted /
+  replacement answer). On detector outage the provider can `failOpen` (allow) or fail
+  closed (block) per config.
+
+Enable OpenGuardrails:
+
+```bash
+export OPENGUARDRAILS_API_KEY=og-...   # get one at https://openguardrails.com
+npm run gateway                         # logs: "guardrail provider: openguardrails"
+```
+
+### Tamper-evident audit
+
+The audit log is an append-only hash chain (`hash_i = sha256(hash_{i-1} || event_i)`). Any
+insertion, deletion, or edit of a past event breaks the chain:
+
+```bash
+node src/cli/index.ts audit --verify
+# audit chain OK — 8 event(s), hash chain intact (tamper-evident).
+```
 
 ## CLI
 
@@ -110,7 +147,10 @@ node src/cli/index.ts audit [--limit N]
 | Tool allow-listing + parameter validation | `gateway/server.ts`, `gateway/tool-registry.ts` |
 | Credential isolation (enterprise key at gateway only) | `gateway/upstream.ts` |
 | Comprehensive action logging | `shared/audit.ts` (JSONL, append-only) |
+| Immutable / tamper-evident audit (Enterprise) | `shared/audit.ts` hash chain + `audit --verify` |
 | Traceability (request-id chain) | `x-agentzt-request-id` propagated client → gateway |
+| Input validation / prompt-injection defense (Enterprise) | `gateway/guardrail-providers.ts` (OpenGuardrails / local) |
+| Output filtering / data-leak prevention (Enterprise) | `gateway/guardrails.ts` secret redaction + output check |
 | Resource-exhaustion containment | `gateway/rate-limiter.ts` |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design, the token flow, and

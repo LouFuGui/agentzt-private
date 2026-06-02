@@ -43,6 +43,41 @@ export type PolicyDoc = {
   roles: Record<string, RolePolicy>;
 };
 
+export type OpenGuardrailsConfig = {
+  baseUrl: string;
+  apiKeyEnv: string;
+  model: string;
+  timeoutMs: number;
+  // On detector error/timeout: false = fail closed (treat as blocked), true = fail open (allow + audit).
+  failOpen: boolean;
+};
+
+export type GuardrailConfig = {
+  // auto: use OpenGuardrails when its API key env is set, else the local detector.
+  provider: 'auto' | 'local' | 'openguardrails';
+  input: {
+    // block: reject flagged prompts; flag: allow but audit; off: disabled.
+    mode: 'block' | 'flag' | 'off';
+  };
+  output: {
+    redactSecrets: boolean;
+    // When true and the provider supports it, run a context-aware output check.
+    check: boolean;
+  };
+  openguardrails: OpenGuardrailsConfig;
+};
+
+export type GuardrailVerdict = {
+  provider: string;
+  flagged: boolean;
+  action: 'pass' | 'reject' | 'replace';
+  riskLevel: string;
+  categories: string[];
+  suggestAnswer?: string;
+  patterns?: string[];
+  error?: string;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -53,6 +88,7 @@ export type GatewayConfig = {
     anthropicBaseUrl: string;
     apiKeyEnv: string;
   };
+  guardrails?: GuardrailConfig;
 };
 
 /** Short-lived access token issued by the gateway (signed EdDSA, gateway key). */
@@ -85,7 +121,8 @@ export type AuditAction =
   | 'token.issue'
   | 'token.reject'
   | 'model.call'
-  | 'tool.call';
+  | 'tool.call'
+  | 'guardrail.block';
 
 export type AuditEvent = {
   ts: string;
@@ -98,4 +135,8 @@ export type AuditEvent = {
   reason: string;
   latencyMs?: number;
   meta?: Record<string, unknown>;
+  // Tamper-evident chain (set by AuditLogger): monotonically increasing seq and
+  // a hash linking each event to the previous one.
+  seq?: number;
+  hash?: string;
 };

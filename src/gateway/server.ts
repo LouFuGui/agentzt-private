@@ -21,7 +21,22 @@ import { TokenService } from './token-service.ts';
 import { RateLimiter } from './rate-limiter.ts';
 import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
-import type { AccessTokenClaims } from '../shared/types.ts';
+import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
+import { createGuardrailProvider } from './guardrail-providers.ts';
+import type { AccessTokenClaims, GuardrailConfig } from '../shared/types.ts';
+
+const DEFAULT_GUARDRAILS: GuardrailConfig = {
+  provider: 'auto',
+  input: { mode: 'block' },
+  output: { redactSecrets: true, check: true },
+  openguardrails: {
+    baseUrl: 'https://api.openguardrails.com/v1',
+    apiKeyEnv: 'OPENGUARDRAILS_API_KEY',
+    model: 'OpenGuardrails-Text',
+    timeoutMs: 5000,
+    failOpen: false,
+  },
+};
 
 const log = makeLogger('gateway');
 
@@ -33,9 +48,12 @@ export function createGatewayServer(): { server: Server; port: number } {
   const tokens = new TokenService(cfg, identities, policy, key);
   const limiter = new RateLimiter(60_000);
   const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
+  const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
+  const guard = createGuardrailProvider(guardrails);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
+  log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
 
@@ -178,8 +196,47 @@ export function createGatewayServer(): { server: Server; port: number } {
       body['max_tokens'] = Math.min(requested, limits.maxOutputTokens);
     }
 
+    // --- Input guardrail: prompt-injection / unsafe content (context-aware) ---
+    const messages = flattenMessages(body);
+    let inputVerdict = undefined;
+    if (guardrails.input.mode !== 'off') {
+      inputVerdict = await guard.checkInput(messages);
+      if (inputVerdict.flagged && guardrails.input.mode === 'block') {
+        const reason = `input guardrail (${inputVerdict.provider}) blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
+        audit.record({
+          requestId: rid, agentId: claims.sub, role: claims.role,
+          action: 'guardrail.block', resource: model, decision: 'deny', reason,
+          meta: { stage: 'input', verdict: inputVerdict },
+        });
+        log.deny(`guardrail.block ${claims.sub} -> ${model}: ${reason}`);
+        return sendError(res, 403, 'guardrail_blocked', reason);
+      }
+    }
+
     const result = await callModel(cfg, { model, body });
     const latencyMs = Date.now() - started;
+
+    // --- Output guardrails: context-aware review + secret redaction ---------
+    let outputVerdict = undefined;
+    let outRedactions = 0;
+    if (result.status === 200) {
+      const promptText = messages.map((m) => m.content).join('\n');
+      const responseText = extractText(result.body);
+      if (guardrails.output.check) {
+        outputVerdict = await guard.checkOutput(promptText, responseText);
+        if (outputVerdict.flagged && outputVerdict.action === 'replace' && outputVerdict.suggestAnswer) {
+          replaceText(result.body, outputVerdict.suggestAnswer);
+        } else if (outputVerdict.flagged && outputVerdict.action === 'reject') {
+          replaceText(result.body, '[response withheld by output guardrail]');
+        }
+      }
+      if (guardrails.output.redactSecrets) {
+        const r = redactSecretsDeep(result.body);
+        result.body = r.value;
+        outRedactions = r.count;
+      }
+    }
+
     audit.record({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'model.call', resource: model, decision: 'allow',
@@ -188,9 +245,18 @@ export function createGatewayServer(): { server: Server; port: number } {
         upstreamStatus: result.status,
         usage: result.usage,
         maxTokens: body['max_tokens'],
+        guardrailProvider: guard.name,
+        inputVerdict,
+        outputVerdict,
+        outputRedactions: outRedactions,
       },
     });
-    log.allow(`model.call ${claims.sub} -> ${model} (${latencyMs}ms, out=${result.usage?.output_tokens ?? '?'} tok)`);
+    const flags = [
+      inputVerdict?.flagged ? `input:${inputVerdict.categories.join('|')}` : null,
+      outputVerdict?.flagged ? `output:${outputVerdict.action}` : null,
+      outRedactions ? `redacted:${outRedactions}` : null,
+    ].filter(Boolean).join(' ');
+    log.allow(`model.call ${claims.sub} -> ${model} (${latencyMs}ms, out=${result.usage?.output_tokens ?? '?'} tok)${flags ? ' ' + flags : ''}`);
     return sendJson(res, result.status, result.body, { [REQUEST_ID_HEADER]: rid });
   }
 
@@ -246,16 +312,44 @@ export function createGatewayServer(): { server: Server; port: number } {
       return sendError(res, 400, 'invalid_request', validationError);
     }
 
-    const result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid });
+    let result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid });
+
+    // Tool outputs are untrusted egress: redact credential-shaped strings before
+    // they reach the agent (and could be fed back into a model prompt).
+    let outRedactions = 0;
+    if (guardrails.output.redactSecrets) {
+      const r = redactSecretsDeep(result);
+      result = r.value;
+      outRedactions = r.count;
+    }
+
     const latencyMs = Date.now() - started;
     audit.record({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
-      reason: decision.reason, latencyMs, meta: { ok: result.ok },
+      reason: decision.reason, latencyMs,
+      meta: { ok: result.ok, outputRedactions: outRedactions },
     });
-    log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms)`);
+    log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms)${outRedactions ? ` redacted:${outRedactions}` : ''}`);
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
   }
 
   return { server, port: cfg.port };
+}
+
+// ---- Anthropic Messages response helpers -----------------------------------
+
+function extractText(body: unknown): string {
+  const content = (body as Record<string, unknown>)?.['content'];
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((b) => (b as Record<string, unknown>)['text'])
+    .filter((t): t is string => typeof t === 'string')
+    .join('\n');
+}
+
+function replaceText(body: unknown, text: string): void {
+  if (body && typeof body === 'object') {
+    (body as Record<string, unknown>)['content'] = [{ type: 'text', text }];
+  }
 }

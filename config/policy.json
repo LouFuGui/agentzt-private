@@ -4,9 +4,9 @@
   "_comment": "Deny-by-default RBAC. An agent's role grants an explicit allow-list of models and tools. Anything not listed is denied. This is the Foundation-tier 'least agency' control: each agent reaches only the model APIs and tools its function requires.",
   "roles": {
     "demo-agent": {
-      "description": "Role used by the bundled end-to-end demo. Allows one model and two read-only tools so each demo step exercises a distinct control.",
+      "description": "Role used by the bundled end-to-end demo. Allows one model and read-only tools so each demo step exercises a distinct control.",
       "models": ["claude-sonnet-4-6"],
-      "tools": ["kb.search", "db.query"],
+      "tools": ["kb.search", "db.query", "web.fetch"],
       "limits": { "maxOutputTokens": 1024, "requestsPerMinute": 60 }
     },
     "research-agent": {

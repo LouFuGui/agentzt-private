@@ -37,8 +37,36 @@ The Policy Decision Point (PDP) and Policy Enforcement Point (PEP).
 - `policy-engine.ts` — deny-by-default RBAC over models and tools.
 - `rate-limiter.ts` — per-agent sliding-window limiter (resource-exhaustion containment).
 - `tool-registry.ts` — built-in tools with per-tool parameter validation.
+- `guardrails.ts` — local detection primitives: injection patterns, spotlighting, recursive
+  secret redaction, and message flattening.
+- `guardrail-providers.ts` — pluggable detector interface with two providers (OpenGuardrails
+  API, local regex) and a factory.
 - `upstream.ts` — `mock` (offline) or `passthrough` (real Model API, enterprise key held here).
-- `server.ts` — routing, authorization, and audit on every request.
+- `server.ts` — routing, authorization, guardrails, and audit on every request.
+
+### Guardrail layer (input/output)
+
+Every model call passes through a guardrail provider twice — once on the prompt (input) and
+once on the response (output):
+
+```
+prompt ─▶ guard.checkInput(messages)   ─▶ block(403) | flag+audit | pass
+upstream response ─▶ guard.checkOutput(prompt,resp) ─▶ replace/withhold ─▶ redactSecretsDeep ─▶ agent
+```
+
+`createGuardrailProvider` selects the backend:
+
+- **OpenGuardrails** (`https://openguardrails.com`) — LLM-based, context-aware. It scores the
+  entire `messages` array, so instructions smuggled into a tool output or retrieved web page
+  and then replayed into the conversation are caught: this is how **indirect prompt
+  injection** is detected, not just direct overrides in the latest user turn. It also reports
+  content-compliance and sensitive-data-leakage categories and can return a redacted
+  `suggest_answer`. On detector outage the provider fails closed by default (configurable).
+- **Local** — a zero-dependency regex detector used offline / as the default when no
+  OpenGuardrails key is set, so the demo and tests need no network.
+
+Tool outputs are additionally run through recursive secret redaction before returning to the
+agent, since a leaked credential in a tool result could otherwise be replayed into a prompt.
 
 ### shared (`src/shared`)
 Types, Ed25519 + compact-JWS crypto, append-only JSONL audit, config loaders, HTTP helpers.
@@ -89,14 +117,21 @@ role, action, resource, decision, reason, latency, and metadata (token usage, up
 status). A task uses one `x-agentzt-request-id`, propagated through every model/tool call,
 so the audit log reconstructs the full chain from triggering event to outcome.
 
-## Roadmap (toward Enterprise / Advanced tiers)
+## Implemented beyond Foundation (Enterprise tier)
 
-The Foundation MVP is built so these slot in without changing call sites:
+- **Input validation / prompt-injection defense** — context-aware guardrail on every prompt,
+  incl. indirect injection via OpenGuardrails (`guardrail-providers.ts`).
+- **Output filtering / data-leak prevention** — context-aware output review + recursive
+  credential redaction on model and tool responses.
+- **Tamper-evident audit** — append-only SHA-256 hash chain with `audit --verify`.
+
+## Roadmap (remaining Enterprise / Advanced tiers)
+
+The codebase is built so these slot in without changing call sites:
 
 - **mTLS with certificate pinning** between client and gateway (Enterprise identity).
 - **ABAC**: fold request attributes (time, data sensitivity, risk score) into decisions.
 - **JIT / JEA**: elevate scope only for a specific task, auto-revoke on completion.
-- **Immutable audit**: swap the JSONL sink for append-only/WORM storage + SIEM streaming.
-- **Input isolation / spotlighting & output filtering** on prompts and completions.
+- **Immutable audit sink**: ship the hash-chained log to append-only/WORM storage + SIEM.
 - **Anomaly detection**: baseline per-agent tool/model usage, alert on drift.
 - **Hardware-bound credentials / attestation** for the gateway signing key (HSM/KMS).
