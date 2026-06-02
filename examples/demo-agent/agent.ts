@@ -45,13 +45,16 @@ async function callModel(model: string, prompt: string) {
   return { status: resp.status, data };
 }
 
-async function callTool(name: string, args: Record<string, unknown>) {
+async function callTool(name: string, args: Record<string, unknown>, elevate?: string) {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    [REQUEST_ID_HEADER]: taskRequestId,
+  };
+  // Declare intent to use JIT elevation; the client proxy fulfils it.
+  if (elevate) headers['x-agentzt-elevate'] = elevate;
   const resp = await fetch(`${PROXY}/v1/tools/${encodeURIComponent(name)}`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      [REQUEST_ID_HEADER]: taskRequestId,
-    },
+    headers,
     body: JSON.stringify({ arguments: args }),
   });
   const data = await resp.json();
@@ -77,7 +80,7 @@ async function main() {
   banner('3. Allowed tool call (kb.search)');
   show('tool kb.search', await callTool('kb.search', { query: 'zero-trust' }));
 
-  banner('4. Denied tool call (email.send — least agency)');
+  banner('4. Denied tool call (email.send — least agency, no standing scope)');
   show('tool email.send', await callTool('email.send', { to: 'ceo@example.com', body: 'hi' }));
 
   banner('5. Parameter validation (db.query write attempt)');
@@ -91,6 +94,12 @@ async function main() {
 
   banner('7. Secret redaction on tool output (output guardrail)');
   show('tool web.fetch (leaky page)', await callTool('web.fetch', { url: 'https://intra.example/report' }));
+
+  banner('8. JIT elevation: email.send WITH just-in-time grant');
+  show(
+    'tool email.send (elevated)',
+    await callTool('email.send', { to: 'customer@example.com', body: 'Your ticket is resolved.' }, 'tool:email.send'),
+  );
 
   console.log('\nInspect the full audit trail:   node src/cli/index.ts audit');
   console.log('Verify audit-log integrity:     node src/cli/index.ts audit --verify');

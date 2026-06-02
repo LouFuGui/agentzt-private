@@ -8,6 +8,7 @@ import {
 import type {
   AccessTokenClaims,
   ClientAssertionClaims,
+  ElevationGrantClaims,
   GatewayConfig,
 } from '../shared/types.ts';
 import type { IdentityStore } from './identity-store.ts';
@@ -126,6 +127,52 @@ export class TokenService {
         agentId,
       };
     }
+  }
+
+  /** Issue a short-lived, single-resource JIT elevation grant. */
+  issueElevation(
+    agentId: string,
+    role: string,
+    resource: { kind: 'model' | 'tool'; name: string },
+    reason: string,
+    ttlSeconds: number,
+  ): { grant: string; claims: ElevationGrantClaims } {
+    const now = Math.floor(Date.now() / 1000);
+    const claims: ElevationGrantClaims = {
+      iss: this.cfg.issuer,
+      sub: agentId,
+      role,
+      resource,
+      reason,
+      iat: now,
+      exp: now + ttlSeconds,
+      jti: newId('elev'),
+    };
+    const grant = signJws(claims, this.key.privateKey, {
+      typ: 'agentzt-elevation-grant',
+      kid: this.cfg.issuer,
+    });
+    return { grant, claims };
+  }
+
+  /** Verify an elevation grant for a specific agent + resource. Throws on failure. */
+  verifyElevation(
+    grant: string,
+    agentId: string,
+    kind: 'model' | 'tool',
+    name: string,
+  ): ElevationGrantClaims {
+    const header = decodeJwsHeader(grant);
+    if (header.typ !== 'agentzt-elevation-grant') throw new Error('not an elevation grant');
+    const claims = verifyJws<ElevationGrantClaims>(grant, this.key.publicKey);
+    const now = Math.floor(Date.now() / 1000);
+    if (claims.iss !== this.cfg.issuer) throw new Error('issuer mismatch');
+    if (claims.exp <= now) throw new Error('elevation grant expired');
+    if (claims.sub !== agentId) throw new Error('elevation grant subject mismatch');
+    if (claims.resource.kind !== kind || claims.resource.name !== name) {
+      throw new Error('elevation grant resource mismatch');
+    }
+    return claims;
   }
 
   /** Verify an access token presented on a resource call. */

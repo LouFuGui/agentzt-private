@@ -7,6 +7,7 @@ import {
   bearerToken,
   headerValue,
   REQUEST_ID_HEADER,
+  ELEVATION_HEADER,
 } from '../shared/http.ts';
 import { newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
@@ -103,6 +104,10 @@ export function createGatewayServer(): { server: Server; port: number } {
         return await handleToken(req, res, rid);
       }
 
+      if (method === 'POST' && path === '/v1/elevate') {
+        return await handleElevate(req, res, rid);
+      }
+
       if (method === 'POST' && path === '/v1/messages') {
         return await handleMessages(req, res, rid);
       }
@@ -157,6 +162,64 @@ export function createGatewayServer(): { server: Server; port: number } {
     });
   }
 
+  async function handleElevate(req: IncomingMessage, res: ServerResponse, rid: string) {
+    const claims = authorize(req, res);
+    if (!claims) return;
+    const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number }>(req);
+    const kind = body.kind === 'model' || body.kind === 'tool' ? body.kind : null;
+    const name = typeof body.name === 'string' ? body.name : '';
+    if (!kind || !name) {
+      return sendError(res, 400, 'invalid_request', 'elevate requires "kind" (model|tool) and "name"');
+    }
+    const reason = (body.reason ?? '').slice(0, 500) || 'unspecified';
+
+    const can = policy.canElevate(claims.role, kind, name);
+    if (!can.allow) {
+      audit.record({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: can.reason,
+        meta: { reason },
+      });
+      log.deny(`elevation.reject ${claims.sub} -> ${kind}:${name}: ${can.reason}`);
+      return sendError(res, 403, 'permission_error', can.reason);
+    }
+
+    const maxTtl = policy.jitMaxTtl(claims.role);
+    const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : maxTtl, maxTtl);
+    const { grant, claims: gc } = tokens.issueElevation(claims.sub, claims.role, { kind, name }, reason, ttl);
+    audit.record({
+      requestId: rid, agentId: claims.sub, role: claims.role,
+      action: 'elevation.grant', resource: `${kind}:${name}`, decision: 'allow',
+      reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, exp: gc.exp },
+    });
+    log.allow(`elevation.grant ${claims.sub} -> ${kind}:${name} (ttl=${ttl}s, reason="${reason}")`);
+    return sendJson(res, 200, { elevation_grant: grant, expires_in: ttl, resource: { kind, name } });
+  }
+
+  // Authorize a resource: in standing scope, OR via a valid JIT elevation grant.
+  function authorizeResource(
+    req: IncomingMessage,
+    claims: AccessTokenClaims,
+    kind: 'model' | 'tool',
+    name: string,
+  ): { allow: boolean; reason: string; via: 'scope' | 'jit' } {
+    const scopeList = kind === 'model' ? claims.scope.models : claims.scope.tools;
+    const inScope = scopeList.includes('*') || scopeList.includes(name);
+    const base = kind === 'model' ? policy.decideModel(claims.role, name) : policy.decideTool(claims.role, name);
+    if (inScope && base.allow) return { allow: true, reason: base.reason, via: 'scope' };
+
+    const grant = headerValue(req, ELEVATION_HEADER);
+    if (grant) {
+      try {
+        const g = tokens.verifyElevation(grant, claims.sub, kind, name);
+        return { allow: true, reason: `JIT elevation (exp in ${g.exp - Math.floor(Date.now() / 1000)}s)`, via: 'jit' };
+      } catch (err) {
+        return { allow: false, reason: `elevation invalid: ${(err as Error).message}`, via: 'jit' };
+      }
+    }
+    return { allow: false, reason: !inScope ? `${kind} "${name}" not in scope (no JIT elevation)` : base.reason, via: 'scope' };
+  }
+
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
     const claims = authorize(req, res);
     if (!claims) return;
@@ -165,18 +228,17 @@ export function createGatewayServer(): { server: Server; port: number } {
     const model = typeof body['model'] === 'string' ? (body['model'] as string) : '';
     if (!model) return sendError(res, 400, 'invalid_request', 'missing "model"');
 
-    // 1) Scope check (the token's snapshot) then 2) live policy check.
-    const inScope = claims.scope.models.includes('*') || claims.scope.models.includes(model);
-    const decision = policy.decideModel(claims.role, model);
-    if (!inScope || !decision.allow) {
-      const reason = !inScope ? `model "${model}" not in token scope` : decision.reason;
+    // Authorize: standing scope or JIT elevation.
+    const authz = authorizeResource(req, claims, 'model', model);
+    if (!authz.allow) {
       audit.record({
         requestId: rid, agentId: claims.sub, role: claims.role,
-        action: 'model.call', resource: model, decision: 'deny', reason,
+        action: 'model.call', resource: model, decision: 'deny', reason: authz.reason,
       });
-      log.deny(`model.call ${claims.sub} -> ${model}: ${reason}`);
-      return sendError(res, 403, 'permission_error', reason);
+      log.deny(`model.call ${claims.sub} -> ${model}: ${authz.reason}`);
+      return sendError(res, 403, 'permission_error', authz.reason);
     }
+    const decision = { reason: authz.reason };
 
     // Rate limit (resource-exhaustion containment).
     const limits = policy.limitsForRole(claims.role);
@@ -213,6 +275,18 @@ export function createGatewayServer(): { server: Server; port: number } {
       }
     }
 
+    // --- ABAC: context-aware authorization (operating hours + risk-adaptive) --
+    const abac = policy.decideAbac(claims.role, { now: new Date(), riskLevel: inputVerdict?.riskLevel });
+    if (!abac.allow) {
+      audit.record({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'model.call', resource: model, decision: 'deny', reason: abac.reason,
+        meta: { abac: true },
+      });
+      log.deny(`model.call ${claims.sub} -> ${model}: ${abac.reason}`);
+      return sendError(res, 403, 'permission_error', abac.reason);
+    }
+
     const result = await callModel(cfg, { model, body });
     const latencyMs = Date.now() - started;
 
@@ -242,6 +316,7 @@ export function createGatewayServer(): { server: Server; port: number } {
       action: 'model.call', resource: model, decision: 'allow',
       reason: decision.reason, latencyMs,
       meta: {
+        authVia: authz.via,
         upstreamStatus: result.status,
         usage: result.usage,
         maxTokens: body['max_tokens'],
@@ -265,16 +340,27 @@ export function createGatewayServer(): { server: Server; port: number } {
     if (!claims) return;
     const started = Date.now();
 
-    const inScope = claims.scope.tools.includes('*') || claims.scope.tools.includes(name);
-    const decision = policy.decideTool(claims.role, name);
-    if (!inScope || !decision.allow) {
-      const reason = !inScope ? `tool "${name}" not in token scope` : decision.reason;
+    // Authorize: standing scope or JIT elevation.
+    const authz = authorizeResource(req, claims, 'tool', name);
+    if (!authz.allow) {
       audit.record({
         requestId: rid, agentId: claims.sub, role: claims.role,
-        action: 'tool.call', resource: name, decision: 'deny', reason,
+        action: 'tool.call', resource: name, decision: 'deny', reason: authz.reason,
       });
-      log.deny(`tool.call ${claims.sub} -> ${name}: ${reason}`);
-      return sendError(res, 403, 'permission_error', reason);
+      log.deny(`tool.call ${claims.sub} -> ${name}: ${authz.reason}`);
+      return sendError(res, 403, 'permission_error', authz.reason);
+    }
+    const decision = { reason: authz.reason };
+
+    // ABAC (operating hours; tool calls have no model risk signal).
+    const abac = policy.decideAbac(claims.role, { now: new Date() });
+    if (!abac.allow) {
+      audit.record({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'tool.call', resource: name, decision: 'deny', reason: abac.reason, meta: { abac: true },
+      });
+      log.deny(`tool.call ${claims.sub} -> ${name}: ${abac.reason}`);
+      return sendError(res, 403, 'permission_error', abac.reason);
     }
 
     const tool = getTool(name);
@@ -328,9 +414,9 @@ export function createGatewayServer(): { server: Server; port: number } {
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
-      meta: { ok: result.ok, outputRedactions: outRedactions },
+      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via },
     });
-    log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms)${outRedactions ? ` redacted:${outRedactions}` : ''}`);
+    log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
   }
 

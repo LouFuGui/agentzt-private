@@ -2,6 +2,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const REQUEST_ID_HEADER = 'x-agentzt-request-id';
 export const AGENT_ID_HEADER = 'x-agentzt-agent-id';
+// Agent declares intent to elevate (e.g. "tool:email.send"); the client proxy
+// fulfils it via /v1/elevate and attaches the resulting grant on this header.
+export const ELEVATE_HEADER = 'x-agentzt-elevate';
+export const ELEVATION_HEADER = 'x-agentzt-elevation';
 
 export async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];

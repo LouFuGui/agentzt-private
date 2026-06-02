@@ -8,6 +8,8 @@ import {
   headerValue,
   REQUEST_ID_HEADER,
   AGENT_ID_HEADER,
+  ELEVATE_HEADER,
+  ELEVATION_HEADER,
 } from '../shared/http.ts';
 import { newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
@@ -38,6 +40,40 @@ export function createClientProxy(opts: ClientProxyOptions): { server: Server; p
     resolve(AUDIT_DIR, `client-${opts.identity.agentId}-audit.jsonl`),
   );
 
+  // JIT elevation grants, cached per resource until shortly before expiry. The
+  // agent only declares intent (x-agentzt-elevate: "tool:email.send"); the
+  // client performs the /v1/elevate exchange and attaches the grant.
+  const grants = new Map<string, { grant: string; expiresAt: number }>();
+
+  async function getElevation(spec: string, rid: string): Promise<string | null> {
+    const [kind, ...rest] = spec.split(':');
+    const name = rest.join(':');
+    if ((kind !== 'model' && kind !== 'tool') || !name) return null;
+    const key = `${kind}:${name}`;
+    const now = Math.floor(Date.now() / 1000);
+    const cached = grants.get(key);
+    if (cached && cached.expiresAt - 5 > now) return cached.grant;
+
+    const token = await opts.tokens.getToken();
+    const resp = await fetch(`${gatewayUrl}/v1/elevate`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        [REQUEST_ID_HEADER]: rid,
+      },
+      body: JSON.stringify({ kind, name, reason: 'agent-requested JIT elevation' }),
+    });
+    if (!resp.ok) {
+      log.deny(`elevation request ${key} -> ${resp.status} rid=${rid}`);
+      return null;
+    }
+    const data = (await resp.json()) as { elevation_grant: string; expires_in: number };
+    grants.set(key, { grant: data.elevation_grant, expiresAt: now + data.expires_in });
+    log.allow(`elevation granted ${key} (ttl=${data.expires_in}s) rid=${rid}`);
+    return data.elevation_grant;
+  }
+
   async function forward(
     req: IncomingMessage,
     res: ServerResponse,
@@ -56,16 +92,21 @@ export function createClientProxy(opts: ClientProxyOptions): { server: Server; p
       return sendError(res, 502, 'identity_error', (err as Error).message);
     }
 
-    const resp = await fetch(`${gatewayUrl}${targetPath}`, {
-      method: 'POST',
-      headers: {
-        'content-type': req.headers['content-type'] ?? 'application/json',
-        authorization: `Bearer ${token}`,
-        [REQUEST_ID_HEADER]: rid,
-        [AGENT_ID_HEADER]: opts.identity.agentId,
-      },
-      body,
-    });
+    const headers: Record<string, string> = {
+      'content-type': req.headers['content-type'] ?? 'application/json',
+      authorization: `Bearer ${token}`,
+      [REQUEST_ID_HEADER]: rid,
+      [AGENT_ID_HEADER]: opts.identity.agentId,
+    };
+
+    // Fulfil a JIT elevation request declared by the agent.
+    const elevateSpec = headerValue(req, ELEVATE_HEADER);
+    if (elevateSpec) {
+      const grant = await getElevation(elevateSpec, rid);
+      if (grant) headers[ELEVATION_HEADER] = grant;
+    }
+
+    const resp = await fetch(`${gatewayUrl}${targetPath}`, { method: 'POST', headers, body });
     const respBody = Buffer.from(await resp.arrayBuffer());
     const latencyMs = Date.now() - started;
 

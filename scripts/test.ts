@@ -11,6 +11,8 @@ import { ROOT, AUDIT_DIR } from '../src/shared/paths.ts';
 import { AgentIdentity } from '../src/client/identity.ts';
 import { verifyChain } from '../src/shared/audit.ts';
 import { OpenGuardrailsProvider } from '../src/gateway/guardrail-providers.ts';
+import { PolicyEngine } from '../src/gateway/policy-engine.ts';
+import { loadPolicy } from '../src/shared/config.ts';
 import { resolve } from 'node:path';
 import { IDENTITIES_DIR } from '../src/shared/paths.ts';
 
@@ -177,6 +179,43 @@ async function main() {
 
   // 11. OpenGuardrails provider HTTP integration (against a fake endpoint).
   await testOpenGuardrailsProvider();
+
+  // 12. ABAC (deterministic, via PolicyEngine with injected time/risk).
+  const pe = new PolicyEngine(loadPolicy());
+  const noon = new Date('2020-01-01T12:00:00Z');
+  const night = new Date('2020-01-01T23:00:00Z');
+  check(pe.decideAbac('ops-agent', { now: noon }).allow, 'ABAC: ops-agent allowed in business hours');
+  check(!pe.decideAbac('ops-agent', { now: night }).allow, 'ABAC: ops-agent denied outside business hours');
+  check(!pe.decideAbac('comms-agent', { now: noon, riskLevel: 'high_risk' }).allow, 'ABAC: risk-adaptive denies high risk');
+  check(pe.decideAbac('comms-agent', { now: noon, riskLevel: 'low_risk' }).allow, 'ABAC: risk-adaptive allows low risk');
+  check(pe.decideAbac('demo-agent', { now: night }).allow, 'ABAC: no conditions -> allow');
+
+  // 13. JIT elevation end-to-end.
+  const elev = await fetch(`${GW}/v1/elevate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ kind: 'tool', name: 'email.send', reason: 'test' }),
+  });
+  const elevBody = (await elev.json().catch(() => null)) as any;
+  check(elev.status === 200 && typeof elevBody?.elevation_grant === 'string', 'JIT: elevatable tool yields a grant');
+
+  const elevated = await fetch(`${GW}/v1/tools/email.send`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+      'x-agentzt-elevation': elevBody.elevation_grant,
+    },
+    body: JSON.stringify({ arguments: { to: 'c@x.z', body: 'hi' } }),
+  });
+  check(elevated.status === 200, 'JIT: out-of-scope tool allowed WITH a valid grant');
+
+  const badElev = await fetch(`${GW}/v1/elevate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ kind: 'model', name: 'claude-opus-4-8', reason: 'test' }),
+  });
+  check(badElev.status === 403, 'JIT: non-elevatable resource is refused');
 
   console.log(`\n${pass} passed, ${fail} failed`);
 }

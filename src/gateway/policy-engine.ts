@@ -1,4 +1,11 @@
-import type { PolicyDoc, RolePolicy, Decision } from '../shared/types.ts';
+import type { PolicyDoc, RolePolicy, Decision, RiskLevel } from '../shared/types.ts';
+
+const RISK_ORDINAL: Record<string, number> = {
+  no_risk: 0,
+  low_risk: 1,
+  medium_risk: 2,
+  high_risk: 3,
+};
 
 /**
  * Deny-by-default RBAC policy engine (Foundation tier "least agency").
@@ -56,5 +63,58 @@ export class PolicyEngine {
 
   limitsForRole(role: string) {
     return this.policy.roles[role]?.limits ?? {};
+  }
+
+  /**
+   * Attribute-based access control evaluated at call time (not just at token
+   * issuance) — the "continuous authorization" idea: context can revoke access
+   * even when RBAC would allow it. Currently: operating hours + risk-adaptive.
+   */
+  decideAbac(
+    role: string,
+    ctx: { now: Date; riskLevel?: RiskLevel },
+  ): Decision {
+    const abac = this.policy.roles[role]?.abac;
+    if (!abac) return { allow: true, reason: 'no ABAC conditions' };
+
+    if (abac.allowedHoursUTC) {
+      const { start, end } = abac.allowedHoursUTC;
+      const hour = ctx.now.getUTCHours();
+      const inWindow = start <= end ? hour >= start && hour < end : hour >= start || hour < end;
+      if (!inWindow) {
+        return {
+          allow: false,
+          reason: `ABAC: outside operating hours (UTC ${start}:00–${end}:00, now ${hour}:00)`,
+        };
+      }
+    }
+
+    if (abac.denyAboveRiskLevel && ctx.riskLevel && ctx.riskLevel !== 'unknown') {
+      const limit = RISK_ORDINAL[abac.denyAboveRiskLevel] ?? 99;
+      const actual = RISK_ORDINAL[ctx.riskLevel] ?? 0;
+      if (actual >= limit) {
+        return {
+          allow: false,
+          reason: `ABAC: risk ${ctx.riskLevel} >= threshold ${abac.denyAboveRiskLevel}`,
+        };
+      }
+    }
+
+    return { allow: true, reason: 'ABAC conditions satisfied' };
+  }
+
+  /** May this role elevate (JIT) to the given resource? */
+  canElevate(role: string, kind: 'model' | 'tool', name: string): Decision {
+    const jit = this.policy.roles[role]?.jit;
+    if (!jit) return { allow: false, reason: `role "${role}" has no JIT policy` };
+    const list = kind === 'model' ? jit.elevatableModels ?? [] : jit.elevatableTools ?? [];
+    if (list.includes('*') || list.includes(name)) {
+      return { allow: true, reason: `role "${role}" may elevate to ${kind} "${name}"` };
+    }
+    return { allow: false, reason: `role "${role}" may not elevate to ${kind} "${name}"` };
+  }
+
+  jitMaxTtl(role: string): number {
+    return this.policy.roles[role]?.jit?.maxTtlSeconds ?? 0;
   }
 }

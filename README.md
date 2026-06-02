@@ -78,6 +78,7 @@ The demo exercises seven distinct controls:
 | 5 | `db.query` with `DELETE …` | DENY 400 | tool parameter validation |
 | 6 | prompt with "ignore all previous instructions…" | DENY 403 | input guardrail (prompt injection) |
 | 7 | `web.fetch` of a page leaking `sk-ant-…` | ALLOW (redacted) | output guardrail (secret redaction) |
+| 8 | `email.send` **with** a JIT elevation grant | ALLOW (`via=jit`) | just-in-time privilege elevation |
 
 ## Configuration
 
@@ -118,6 +119,30 @@ export OPENGUARDRAILS_API_KEY=og-...   # get one at https://openguardrails.com
 npm run gateway                         # logs: "guardrail provider: openguardrails"
 ```
 
+### Context-aware (ABAC) and just-in-time (JIT) authorization
+
+RBAC scope is the floor; two further controls layer on top, both configured per
+role in `config/policy.json`:
+
+- **ABAC** (`abac`) re-checks context at *call time*, not just at token issuance:
+  - `allowedHoursUTC` — restrict an agent to operating hours (e.g. `ops-agent` is
+    business-hours only); calls outside the window are denied.
+  - `denyAboveRiskLevel` — risk-adaptive: deny when the request's guardrail risk
+    level reaches the threshold (ties guardrail verdicts into authorization).
+- **JIT elevation** (`jit`) keeps high-blast-radius resources out of standing
+  scope entirely. `email.send` is in no role's `tools`; a role whose `jit.elevatableTools`
+  lists it can request a **single-resource, short-lived grant** (`maxTtlSeconds`)
+  on demand. The agent just declares intent with a header; the client performs the
+  `/v1/elevate` exchange and attaches the grant, which auto-expires:
+
+  ```bash
+  # Agent side — declare intent; the client fulfils JIT and attaches the grant.
+  curl -H 'x-agentzt-elevate: tool:email.send' \
+       -H 'x-agentzt-request-id: req_123' \
+       -d '{"arguments":{"to":"c@x.z","body":"…"}}' \
+       http://localhost:8787/v1/tools/email.send
+  ```
+
 ### Tamper-evident audit
 
 The audit log is an append-only hash chain (`hash_i = sha256(hash_{i-1} || event_i)`). Any
@@ -144,6 +169,8 @@ node src/cli/index.ts audit [--limit N]
 | Unique cryptographic identity per agent | `src/cli` enroll → Ed25519 keypair; `gateway/identity-store.ts` |
 | Short-lived IdP-issued tokens, auto-refresh | `gateway/token-service.ts`, `client/token-client.ts` |
 | Deny-by-default RBAC / least agency | `gateway/policy-engine.ts`, `config/policy.json` |
+| Context-aware authorization / ABAC (Enterprise) | `gateway/policy-engine.ts` `decideAbac` (hours + risk) |
+| JIT / just-enough-administration (Advanced) | `gateway/token-service.ts` elevation grants, `/v1/elevate` |
 | Tool allow-listing + parameter validation | `gateway/server.ts`, `gateway/tool-registry.ts` |
 | Credential isolation (enterprise key at gateway only) | `gateway/upstream.ts` |
 | Comprehensive action logging | `shared/audit.ts` (JSONL, append-only) |

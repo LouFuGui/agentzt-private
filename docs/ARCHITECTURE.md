@@ -97,6 +97,25 @@ Two token types, both compact JWS over Ed25519:
   identity, lifetime ~60s, single-use (`jti` replay cache).
 - **access token** (`typ: agentzt-access-token`, signed by the *gateway* key) — bearer token
   for resource calls, lifetime ~5 min, carries the agent's scope snapshot.
+- **elevation grant** (`typ: agentzt-elevation-grant`, signed by the *gateway* key) — a
+  single-resource, short-lived JIT capability (`{resource:{kind,name}, exp}`) issued by
+  `/v1/elevate`; presented on the `x-agentzt-elevation` header to authorize a resource that
+  is deliberately *not* in standing scope.
+
+## Authorization decision order
+
+Each model/tool call is authorized in layers — any layer can deny:
+
+1. **Authentication** — valid, unexpired access token (signature + issuer + exp).
+2. **Resource authorization** — resource in the token's standing scope AND permitted by
+   live RBAC; otherwise a valid JIT elevation grant for exactly that resource (`authVia`
+   records `scope` vs `jit`).
+3. **Rate limit** — per-agent sliding window (resource-exhaustion containment).
+4. **Input guardrail** — context-aware prompt-injection / safety check (block | flag | off).
+5. **ABAC** — operating hours + risk-adaptive (risk level from the input guardrail).
+6. **Execution** — forward to upstream model / run the tool.
+7. **Output guardrail** — context-aware output review + secret redaction before the response
+   reaches the agent.
 
 ## Trust boundaries
 
@@ -124,14 +143,15 @@ so the audit log reconstructs the full chain from triggering event to outcome.
 - **Output filtering / data-leak prevention** — context-aware output review + recursive
   credential redaction on model and tool responses.
 - **Tamper-evident audit** — append-only SHA-256 hash chain with `audit --verify`.
+- **ABAC** — call-time context conditions: operating hours + risk-adaptive (`decideAbac`).
+- **JIT elevation** — single-resource, short-lived grants for resources kept out of
+  standing scope (`/v1/elevate`); auto-expiring, client-fulfilled from a declared intent.
 
 ## Roadmap (remaining Enterprise / Advanced tiers)
 
 The codebase is built so these slot in without changing call sites:
 
 - **mTLS with certificate pinning** between client and gateway (Enterprise identity).
-- **ABAC**: fold request attributes (time, data sensitivity, risk score) into decisions.
-- **JIT / JEA**: elevate scope only for a specific task, auto-revoke on completion.
 - **Immutable audit sink**: ship the hash-chained log to append-only/WORM storage + SIEM.
 - **Anomaly detection**: baseline per-agent tool/model usage, alert on drift.
 - **Hardware-bound credentials / attestation** for the gateway signing key (HSM/KMS).

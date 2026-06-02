@@ -30,11 +30,31 @@ export type RoleLimits = {
   requestsPerMinute?: number;
 };
 
+export type RiskLevel = 'no_risk' | 'low_risk' | 'medium_risk' | 'high_risk' | 'unknown';
+
+/** Attribute-based access control: context conditions layered on top of RBAC. */
+export type AbacPolicy = {
+  // Operating hours in UTC as [start, end) on a 0-24 clock. Calls outside the
+  // window are denied ("restrict an agent to operating hours").
+  allowedHoursUTC?: { start: number; end: number };
+  // Risk-adaptive: deny when the request's guardrail risk level reaches/exceeds this.
+  denyAboveRiskLevel?: 'low_risk' | 'medium_risk' | 'high_risk';
+};
+
+/** Just-in-time elevation: resources a role may temporarily acquire on demand. */
+export type JitPolicy = {
+  elevatableModels?: string[];
+  elevatableTools?: string[];
+  maxTtlSeconds: number;
+};
+
 export type RolePolicy = {
   description?: string;
   models: string[];
   tools: string[];
   limits?: RoleLimits;
+  abac?: AbacPolicy;
+  jit?: JitPolicy;
 };
 
 export type PolicyDoc = {
@@ -102,6 +122,18 @@ export type AccessTokenClaims = {
   jti: string;
 };
 
+/** JIT elevation grant (signed EdDSA, gateway key): a single-resource, short-lived capability. */
+export type ElevationGrantClaims = {
+  iss: string;
+  sub: string; // agentId
+  role: string;
+  resource: { kind: 'model' | 'tool'; name: string };
+  reason: string;
+  iat: number;
+  exp: number;
+  jti: string;
+};
+
 /** Client assertion (signed EdDSA, agent key) presented to obtain an access token. */
 export type ClientAssertionClaims = {
   iss: string; // agentId
@@ -122,7 +154,9 @@ export type AuditAction =
   | 'token.reject'
   | 'model.call'
   | 'tool.call'
-  | 'guardrail.block';
+  | 'guardrail.block'
+  | 'elevation.grant'
+  | 'elevation.reject';
 
 export type AuditEvent = {
   ts: string;
