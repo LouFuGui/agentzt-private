@@ -98,6 +98,18 @@ export type GuardrailVerdict = {
   error?: string;
 };
 
+export type GatewayTlsConfig = {
+  // When enabled, the gateway serves HTTPS and requires mutual TLS: clients must
+  // present a certificate signed by the agentzt CA (requestCert + rejectUnauthorized).
+  enabled: boolean;
+  keyFile: string;
+  certFile: string;
+  caFile: string;
+  // Channel binding: require the client cert CN to equal the token subject, so a
+  // stolen token cannot be replayed over a different TLS channel.
+  channelBinding: boolean;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -109,6 +121,7 @@ export type GatewayConfig = {
     apiKeyEnv: string;
   };
   guardrails?: GuardrailConfig;
+  tls?: GatewayTlsConfig;
 };
 
 /** Short-lived access token issued by the gateway (signed EdDSA, gateway key). */

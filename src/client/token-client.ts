@@ -1,6 +1,8 @@
 import type { AgentIdentity } from './identity.ts';
 import { decodeJwsPayload } from '../shared/crypto.ts';
 import type { AccessTokenClaims } from '../shared/types.ts';
+import { request } from './transport.ts';
+import type { ClientTls } from './transport.ts';
 
 type CachedToken = {
   token: string;
@@ -20,10 +22,12 @@ export class TokenClient {
   private cached: CachedToken | null = null;
   private refreshSkewSeconds = 30;
   private inflight: Promise<CachedToken> | null = null;
+  private tls: ClientTls | null;
 
-  constructor(identity: AgentIdentity, gatewayUrl: string) {
+  constructor(identity: AgentIdentity, gatewayUrl: string, tls: ClientTls | null = null) {
     this.identity = identity;
     this.gatewayUrl = gatewayUrl.replace(/\/$/, '');
+    this.tls = tls;
   }
 
   private fresh(): boolean {
@@ -51,16 +55,16 @@ export class TokenClient {
   private async fetchToken(): Promise<CachedToken> {
     const audience = `agentzt-gateway/v1/token`;
     const assertion = this.identity.makeAssertion(audience);
-    const resp = await fetch(`${this.gatewayUrl}/v1/token`, {
+    const resp = await request(`${this.gatewayUrl}/v1/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assertion }),
+      body: Buffer.from(JSON.stringify({ assertion })),
+      tls: this.tls,
     });
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`token request failed (${resp.status}): ${err}`);
+    if (resp.status < 200 || resp.status >= 300) {
+      throw new Error(`token request failed (${resp.status}): ${resp.body.toString('utf8')}`);
     }
-    const data = (await resp.json()) as { access_token: string };
+    const data = JSON.parse(resp.body.toString('utf8')) as { access_token: string };
     const claims = decodeJwsPayload<AccessTokenClaims>(data.access_token);
     this.cached = {
       token: data.access_token,

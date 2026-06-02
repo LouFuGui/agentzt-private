@@ -17,6 +17,8 @@ import { AuditLogger } from '../shared/audit.ts';
 import { AUDIT_DIR } from '../shared/paths.ts';
 import type { AgentIdentity } from './identity.ts';
 import type { TokenClient } from './token-client.ts';
+import { request } from './transport.ts';
+import type { ClientTls } from './transport.ts';
 
 const log = makeLogger('client');
 
@@ -25,6 +27,7 @@ export type ClientProxyOptions = {
   tokens: TokenClient;
   gatewayUrl: string;
   listenPort: number;
+  tls: ClientTls | null;
 };
 
 /**
@@ -55,20 +58,21 @@ export function createClientProxy(opts: ClientProxyOptions): { server: Server; p
     if (cached && cached.expiresAt - 5 > now) return cached.grant;
 
     const token = await opts.tokens.getToken();
-    const resp = await fetch(`${gatewayUrl}/v1/elevate`, {
+    const resp = await request(`${gatewayUrl}/v1/elevate`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${token}`,
         [REQUEST_ID_HEADER]: rid,
       },
-      body: JSON.stringify({ kind, name, reason: 'agent-requested JIT elevation' }),
+      body: Buffer.from(JSON.stringify({ kind, name, reason: 'agent-requested JIT elevation' })),
+      tls: opts.tls,
     });
-    if (!resp.ok) {
+    if (resp.status < 200 || resp.status >= 300) {
       log.deny(`elevation request ${key} -> ${resp.status} rid=${rid}`);
       return null;
     }
-    const data = (await resp.json()) as { elevation_grant: string; expires_in: number };
+    const data = JSON.parse(resp.body.toString('utf8')) as { elevation_grant: string; expires_in: number };
     grants.set(key, { grant: data.elevation_grant, expiresAt: now + data.expires_in });
     log.allow(`elevation granted ${key} (ttl=${data.expires_in}s) rid=${rid}`);
     return data.elevation_grant;
@@ -106,8 +110,8 @@ export function createClientProxy(opts: ClientProxyOptions): { server: Server; p
       if (grant) headers[ELEVATION_HEADER] = grant;
     }
 
-    const resp = await fetch(`${gatewayUrl}${targetPath}`, { method: 'POST', headers, body });
-    const respBody = Buffer.from(await resp.arrayBuffer());
+    const resp = await request(`${gatewayUrl}${targetPath}`, { method: 'POST', headers, body, tls: opts.tls });
+    const ok = resp.status >= 200 && resp.status < 300;
     const latencyMs = Date.now() - started;
 
     audit.record({
@@ -116,18 +120,18 @@ export function createClientProxy(opts: ClientProxyOptions): { server: Server; p
       role: opts.identity.role,
       action,
       resource,
-      decision: resp.ok ? 'allow' : 'deny',
+      decision: ok ? 'allow' : 'deny',
       reason: `gateway responded ${resp.status}`,
       latencyMs,
     });
-    if (resp.ok) log.allow(`${action} ${resource} -> ${resp.status} (${latencyMs}ms) rid=${rid}`);
+    if (ok) log.allow(`${action} ${resource} -> ${resp.status} (${latencyMs}ms) rid=${rid}`);
     else log.deny(`${action} ${resource} -> ${resp.status} (${latencyMs}ms) rid=${rid}`);
 
     res.writeHead(resp.status, {
-      'content-type': resp.headers.get('content-type') ?? 'application/json',
+      'content-type': resp.contentType,
       [REQUEST_ID_HEADER]: rid,
     });
-    res.end(respBody);
+    res.end(resp.body);
   }
 
   const server = createServer(async (req, res) => {

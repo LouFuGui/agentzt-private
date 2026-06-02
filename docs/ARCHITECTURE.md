@@ -25,7 +25,11 @@ A local HTTP proxy that the agent points its model SDK at, plus the agent's iden
 - `token-client.ts` — exchanges an assertion for a **short-lived access token**, caches it,
   and refreshes ~30s before expiry. No human in the loop, no long-lived secret.
 - `proxy.ts` — accepts Anthropic-shaped `/v1/messages` and `/v1/tools/:name`, attaches the
-  bearer token + `x-agentzt-request-id` + `x-agentzt-agent-id`, and forwards to the gateway.
+  bearer token + `x-agentzt-request-id` + `x-agentzt-agent-id`, fulfils JIT elevation
+  requests, and forwards to the gateway.
+- `transport.ts` — unified outbound: HTTPS with client cert + CA/leaf pinning when mTLS is
+  on, plain `fetch` otherwise.
+- `cli/tls.ts` — openssl-backed PKI: create the CA + gateway server cert, issue client certs.
 
 ### agentzt-gateway (`src/gateway`)
 The Policy Decision Point (PDP) and Policy Enforcement Point (PEP).
@@ -106,6 +110,9 @@ Two token types, both compact JWS over Ed25519:
 
 Each model/tool call is authorized in layers — any layer can deny:
 
+0. **Transport (mTLS, optional)** — when enabled, the TLS handshake itself rejects any
+   client without a certificate signed by the agentzt CA, and channel binding ties the
+   token to the cert (`CN == sub`).
 1. **Authentication** — valid, unexpired access token (signature + issuer + exp).
 2. **Resource authorization** — resource in the token's standing scope AND permitted by
    live RBAC; otherwise a valid JIT elevation grant for exactly that resource (`authVia`
@@ -146,12 +153,15 @@ so the audit log reconstructs the full chain from triggering event to outcome.
 - **ABAC** — call-time context conditions: operating hours + risk-adaptive (`decideAbac`).
 - **JIT elevation** — single-resource, short-lived grants for resources kept out of
   standing scope (`/v1/elevate`); auto-expiring, client-fulfilled from a declared intent.
+- **Mutual TLS** — opt-in client↔gateway mTLS with an internal CA (`cli/tls.ts`),
+  CA pinning + optional leaf pinning (`client/transport.ts`), and channel binding
+  (cert `CN` == token `sub`) so tokens can't be replayed across channels.
 
 ## Roadmap (remaining Enterprise / Advanced tiers)
 
 The codebase is built so these slot in without changing call sites:
 
-- **mTLS with certificate pinning** between client and gateway (Enterprise identity).
 - **Immutable audit sink**: ship the hash-chained log to append-only/WORM storage + SIEM.
+- **Hardware-bound credentials / attestation** for the gateway signing key (HSM/KMS).
 - **Anomaly detection**: baseline per-agent tool/model usage, alert on drift.
 - **Hardware-bound credentials / attestation** for the gateway signing key (HSM/KMS).

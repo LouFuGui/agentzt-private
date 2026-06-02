@@ -3,10 +3,11 @@ import { makeLogger } from '../shared/log.ts';
 
 const log = makeLogger('gateway');
 
-const { server, port } = createGatewayServer();
+const { server, port, tls } = createGatewayServer();
+const scheme = tls ? 'https' : 'http';
 
 server.listen(port, () => {
-  log.info(`agentzt-gateway listening on http://localhost:${port}`);
+  log.info(`agentzt-gateway listening on ${scheme}://localhost:${port}`);
   log.info(`  token endpoint   POST /v1/token`);
   log.info(`  model proxy      POST /v1/messages`);
   log.info(`  tool proxy       POST /v1/tools/:name`);

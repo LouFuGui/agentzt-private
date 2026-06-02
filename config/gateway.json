@@ -21,5 +21,13 @@
       "timeoutMs": 5000,
       "failOpen": false
     }
+  },
+  "tls": {
+    "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1). channelBinding requires the client cert CN to equal the token subject.",
+    "enabled": false,
+    "keyFile": ".agentzt/tls/server.key",
+    "certFile": ".agentzt/tls/server.crt",
+    "caFile": ".agentzt/tls/ca.crt",
+    "channelBinding": true
   }
 }

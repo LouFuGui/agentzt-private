@@ -1,10 +1,11 @@
 import { resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { makeLogger } from '../shared/log.ts';
-import { IDENTITIES_DIR } from '../shared/paths.ts';
+import { IDENTITIES_DIR, TLS_DIR, TLS_CLIENTS_DIR } from '../shared/paths.ts';
 import { AgentIdentity } from './identity.ts';
 import { TokenClient } from './token-client.ts';
 import { createClientProxy } from './proxy.ts';
+import type { ClientTls } from './transport.ts';
 
 const log = makeLogger('client');
 
@@ -46,16 +47,40 @@ if (!existsSync(identityPath)) {
 }
 
 const identity = AgentIdentity.fromFile(identityPath);
-const gatewayUrl = strArg('--gateway', 'AGENTZT_GATEWAY_URL', 'http://localhost:8700');
 const listenPort = intArg('--port', 'AGENTZT_CLIENT_PORT', 8787);
 
-const tokens = new TokenClient(identity, gatewayUrl);
-const { server, port } = createClientProxy({ identity, tokens, gatewayUrl, listenPort });
+// mTLS: opt-in via --mtls or AGENTZT_TLS=1. Loads the agentzt CA (sole trust
+// anchor) plus this agent's client cert/key issued by `agentzt tls issue`.
+const mtls = process.argv.slice(2).includes('--mtls') || process.env.AGENTZT_TLS === '1';
+let tls: ClientTls | null = null;
+let defaultGateway = 'http://localhost:8700';
+if (mtls) {
+  const caFile = resolve(TLS_DIR, 'ca.crt');
+  const certFile = resolve(TLS_CLIENTS_DIR, `${identity.agentId}.crt`);
+  const keyFile = resolve(TLS_CLIENTS_DIR, `${identity.agentId}.key`);
+  for (const f of [caFile, certFile, keyFile]) {
+    if (!existsSync(f)) {
+      log.error(`mTLS enabled but missing ${f}. Run: node src/cli/index.ts tls init && node src/cli/index.ts tls issue --agent ${identity.agentId}`);
+      process.exit(1);
+    }
+  }
+  tls = {
+    ca: readFileSync(caFile),
+    cert: readFileSync(certFile),
+    key: readFileSync(keyFile),
+    pinSha256: process.env.AGENTZT_TLS_PIN,
+  };
+  defaultGateway = 'https://localhost:8700';
+}
+
+const gatewayUrl = strArg('--gateway', 'AGENTZT_GATEWAY_URL', defaultGateway);
+const tokens = new TokenClient(identity, gatewayUrl, tls);
+const { server, port } = createClientProxy({ identity, tokens, gatewayUrl, listenPort, tls });
 
 server.listen(port, () => {
   log.info(`agentzt-client proxy for "${identity.agentId}" (role=${identity.role})`);
   log.info(`  listening   http://localhost:${port}`);
-  log.info(`  gateway     ${gatewayUrl}`);
+  log.info(`  gateway     ${gatewayUrl}${tls ? '  (mutual TLS)' : ''}`);
   log.info(`  point your agent at it:`);
   log.info(`    export ANTHROPIC_BASE_URL=http://localhost:${port}`);
   log.info(`    export ANTHROPIC_API_KEY=agentzt-managed   # value ignored; identity is cryptographic`);

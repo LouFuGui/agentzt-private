@@ -1,4 +1,7 @@
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
+import { readFileSync } from 'node:fs';
+import type { TLSSocket } from 'node:tls';
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import {
   readJson,
@@ -12,8 +15,9 @@ import {
 import { newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
 import { AuditLogger } from '../shared/audit.ts';
-import { AUDIT_DIR } from '../shared/paths.ts';
+import { AUDIT_DIR, TLS_DIR } from '../shared/paths.ts';
 import { resolve } from 'node:path';
+import type { GatewayTlsConfig } from '../shared/types.ts';
 import { loadGatewayConfig, loadPolicy } from '../shared/config.ts';
 import { loadOrCreateGatewayKey } from './gateway-key.ts';
 import { IdentityStore } from './identity-store.ts';
@@ -41,7 +45,22 @@ const DEFAULT_GUARDRAILS: GuardrailConfig = {
 
 const log = makeLogger('gateway');
 
-export function createGatewayServer(): { server: Server; port: number } {
+// TLS is enabled by config (cfg.tls.enabled) or the AGENTZT_TLS=1 env override
+// (used by the mTLS demo/tests with default .agentzt/tls/ paths).
+function resolveTls(cfg: GatewayConfig): GatewayTlsConfig | null {
+  if (process.env.AGENTZT_TLS === '1') {
+    return {
+      enabled: true,
+      keyFile: resolve(TLS_DIR, 'server.key'),
+      certFile: resolve(TLS_DIR, 'server.crt'),
+      caFile: resolve(TLS_DIR, 'ca.crt'),
+      channelBinding: process.env.AGENTZT_TLS_CHANNEL_BINDING !== '0',
+    };
+  }
+  return cfg.tls?.enabled ? cfg.tls : null;
+}
+
+export function createGatewayServer(): { server: Server; port: number; tls: boolean } {
   const cfg = loadGatewayConfig();
   const policy = new PolicyEngine(loadPolicy());
   const identities = new IdentityStore();
@@ -51,12 +70,24 @@ export function createGatewayServer(): { server: Server; port: number } {
   const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
   const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
   const guard = createGuardrailProvider(guardrails);
+  const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
+  if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
+
+  // Returns the client cert CN for an mTLS connection, or null.
+  function peerCN(req: IncomingMessage): string | null {
+    if (!tls) return null;
+    const socket = req.socket as TLSSocket;
+    if (typeof socket.getPeerCertificate !== 'function') return null;
+    const cert = socket.getPeerCertificate();
+    const cn = cert && cert.subject ? (cert.subject as { CN?: string }).CN : undefined;
+    return cn ?? null;
+  }
 
   function requestId(req: IncomingMessage): string {
     return headerValue(req, REQUEST_ID_HEADER) ?? newId('req');
@@ -72,15 +103,27 @@ export function createGatewayServer(): { server: Server; port: number } {
       sendError(res, 401, 'authentication_error', 'missing bearer token');
       return null;
     }
+    let claims: AccessTokenClaims;
     try {
-      return tokens.verifyAccessToken(token);
+      claims = tokens.verifyAccessToken(token);
     } catch (err) {
       sendError(res, 401, 'authentication_error', (err as Error).message);
       return null;
     }
+    // Channel binding: the token may only be used over a TLS channel
+    // authenticated as the same agent (cert CN == token subject).
+    if (tls && tls.channelBinding) {
+      const cn = peerCN(req);
+      if (cn !== claims.sub) {
+        sendError(res, 401, 'authentication_error',
+          `channel binding failed: client cert CN "${cn}" != token subject "${claims.sub}"`);
+        return null;
+      }
+    }
+    return claims;
   }
 
-  const server = createServer(async (req, res) => {
+  const handler = async (req: IncomingMessage, res: ServerResponse) => {
     const rid = requestId(req);
     res.setHeader(REQUEST_ID_HEADER, rid);
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -122,7 +165,21 @@ export function createGatewayServer(): { server: Server; port: number } {
       log.error(`unhandled error on ${method} ${path}: ${(err as Error).message}`);
       return sendError(res, 500, 'internal_error', 'internal error');
     }
-  });
+  };
+
+  const server: Server = tls
+    ? createHttpsServer(
+        {
+          key: readFileSync(tls.keyFile),
+          cert: readFileSync(tls.certFile),
+          ca: readFileSync(tls.caFile),
+          requestCert: true,
+          rejectUnauthorized: true,
+          minVersion: 'TLSv1.2',
+        },
+        handler,
+      )
+    : createServer(handler);
 
   async function handleToken(req: IncomingMessage, res: ServerResponse, rid: string) {
     const body = await readJson<{ assertion?: string }>(req);
@@ -420,7 +477,7 @@ export function createGatewayServer(): { server: Server; port: number } {
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
   }
 
-  return { server, port: cfg.port };
+  return { server, port: cfg.port, tls: !!tls };
 }
 
 // ---- Anthropic Messages response helpers -----------------------------------

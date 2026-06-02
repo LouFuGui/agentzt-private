@@ -12,6 +12,8 @@ export const CONFIG_DIR = resolve(ROOT, 'config');
 export const STATE_DIR = resolve(ROOT, '.agentzt');
 export const IDENTITIES_DIR = resolve(STATE_DIR, 'identities');
 export const AUDIT_DIR = resolve(STATE_DIR, 'audit');
+export const TLS_DIR = resolve(STATE_DIR, 'tls');
+export const TLS_CLIENTS_DIR = resolve(TLS_DIR, 'clients');
 
 export const POLICY_FILE = resolve(CONFIG_DIR, 'policy.json');
 export const GATEWAY_CONFIG_FILE = resolve(CONFIG_DIR, 'gateway.json');

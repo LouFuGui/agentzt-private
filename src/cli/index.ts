@@ -4,6 +4,7 @@ import { IDENTITIES_DIR, AUDIT_DIR } from '../shared/paths.ts';
 import { generateEd25519 } from '../shared/crypto.ts';
 import { loadRegistry, saveRegistry, loadPolicy } from '../shared/config.ts';
 import { verifyChain } from '../shared/audit.ts';
+import { caInit, issueClientCert } from './tls.ts';
 import type { AgentIdentityFile, AgentRegistryEntry } from '../shared/types.ts';
 
 function flag(args: string[], name: string): string | undefined {
@@ -15,18 +16,22 @@ function usage(): never {
   console.log(`agentzt — Zero Trust for AI Agents
 
 Usage:
-  npm run enroll -- --agent <id> --role <role> [--description <text>]
+  npm run enroll -- --agent <id> --role <role> [--description <text>] [--mtls]
   node src/cli/index.ts agents
-  node src/cli/index.ts audit [--limit N]
+  node src/cli/index.ts audit [--limit N | --verify]
   node src/cli/index.ts roles
+  node src/cli/index.ts tls init [--force]
+  node src/cli/index.ts tls issue --agent <id>
 
 Commands:
   enroll   Generate a cryptographic identity for an agent, write the private
            key to .agentzt/identities/<id>.json, and register the public key
-           in config/agents.json.
+           in config/agents.json. With --mtls, also issue an mTLS client cert.
   agents   List registered agent identities.
   roles    List roles defined in config/policy.json.
-  audit    Print recent gateway audit events.
+  audit    Print recent gateway audit events, or --verify the hash chain.
+  tls      Manage mutual-TLS PKI: 'init' creates the CA + gateway server cert,
+           'issue --agent <id>' issues a client cert (requires openssl).
 `);
   process.exit(1);
 }
@@ -54,6 +59,7 @@ function cmdEnroll(args: string[]): void {
     reg.agents = reg.agents.filter((a) => a.agentId !== agentId);
   }
 
+  const mtls = args.includes('--mtls');
   const { publicKeyJwk, privateKeyJwk } = generateEd25519();
   const createdAt = new Date().toISOString();
 
@@ -81,6 +87,8 @@ function cmdEnroll(args: string[]): void {
   if (description) entry.description = description;
   reg.agents.push(entry);
   saveRegistry(reg);
+
+  if (mtls) issueClientCert(agentId);
 
   console.log(`enrolled agent "${agentId}" (role=${role})`);
   console.log(`  private identity: ${idPath}  (keep secret; gitignored)`);
@@ -139,11 +147,29 @@ function cmdAudit(args: string[]): void {
   }
 }
 
+function cmdTls(args: string[]): void {
+  const sub = args[0];
+  if (sub === 'init') {
+    caInit(args.includes('--force'));
+  } else if (sub === 'issue') {
+    const agentId = flag(args, '--agent');
+    if (!agentId) {
+      console.error('error: tls issue requires --agent <id>');
+      process.exit(1);
+    }
+    issueClientCert(agentId);
+  } else {
+    console.error('usage: tls init [--force] | tls issue --agent <id>');
+    process.exit(1);
+  }
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 switch (cmd) {
   case 'enroll': cmdEnroll(rest); break;
   case 'agents': cmdAgents(); break;
   case 'roles': cmdRoles(); break;
   case 'audit': cmdAudit(rest); break;
+  case 'tls': cmdTls(rest); break;
   default: usage();
 }

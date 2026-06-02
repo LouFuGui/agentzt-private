@@ -19,6 +19,7 @@
     "enroll": "node src/cli/index.ts enroll",
     "demo:agent": "node examples/demo-agent/agent.ts",
     "demo": "node scripts/demo.ts",
+    "demo:mtls": "node scripts/demo-mtls.ts",
     "test": "node scripts/test.ts",
     "typecheck": "tsc --noEmit"
   },

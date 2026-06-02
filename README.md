@@ -153,6 +153,32 @@ node src/cli/index.ts audit --verify
 # audit chain OK — 8 event(s), hash chain intact (tamper-evident).
 ```
 
+### Mutual TLS (opt-in)
+
+For transport-layer mutual authentication, agentzt can run the client↔gateway link over
+mTLS with an internal CA. This is **opt-in** (off by default so the zero-setup HTTP demo
+works) and uses `openssl` for one-time PKI provisioning; the runtime is pure Node TLS.
+
+```bash
+npm run demo:mtls    # init CA, issue certs, run the full path over mutual TLS
+```
+
+What it adds on top of the token layer:
+
+- The gateway serves HTTPS with `requestCert + rejectUnauthorized` — a client with **no
+  certificate signed by the agentzt CA** can't even complete the handshake.
+- The client trusts **only** the agentzt CA (CA pinning), not system roots, and can
+  additionally pin the exact server cert (`AGENTZT_TLS_PIN`).
+- **Channel binding**: the gateway requires the client cert `CN` to equal the token
+  subject, so a stolen token can't be replayed over a different TLS channel.
+
+```bash
+node src/cli/index.ts tls init                      # CA + gateway server cert
+node src/cli/index.ts enroll --agent a1 --role demo-agent --mtls   # + client cert
+AGENTZT_TLS=1 npm run gateway                        # gateway over mutual TLS
+AGENTZT_AGENT_ID=a1 npm run client -- --mtls         # client presents its cert
+```
+
 ## CLI
 
 ```bash
@@ -167,6 +193,7 @@ node src/cli/index.ts audit [--limit N]
 | Framework control | Where it lives |
 |---|---|
 | Unique cryptographic identity per agent | `src/cli` enroll → Ed25519 keypair; `gateway/identity-store.ts` |
+| Mutual TLS + cert pinning + channel binding (Enterprise) | `gateway/server.ts` (HTTPS), `client/transport.ts`, `cli/tls.ts` |
 | Short-lived IdP-issued tokens, auto-refresh | `gateway/token-service.ts`, `client/token-client.ts` |
 | Deny-by-default RBAC / least agency | `gateway/policy-engine.ts`, `config/policy.json` |
 | Context-aware authorization / ABAC (Enterprise) | `gateway/policy-engine.ts` `decideAbac` (hours + risk) |

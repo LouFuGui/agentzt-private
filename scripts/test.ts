@@ -7,8 +7,13 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
-import { ROOT, AUDIT_DIR } from '../src/shared/paths.ts';
+import { request as httpsRequest } from 'node:https';
+import { connect } from 'node:net';
+import { readFileSync } from 'node:fs';
+import { ROOT, AUDIT_DIR, TLS_DIR, TLS_CLIENTS_DIR } from '../src/shared/paths.ts';
 import { AgentIdentity } from '../src/client/identity.ts';
+import { request as transportRequest } from '../src/client/transport.ts';
+import type { ClientTls } from '../src/client/transport.ts';
 import { verifyChain } from '../src/shared/audit.ts';
 import { OpenGuardrailsProvider } from '../src/gateway/guardrail-providers.ts';
 import { PolicyEngine } from '../src/gateway/policy-engine.ts';
@@ -86,6 +91,86 @@ async function testOpenGuardrailsProvider() {
   check(!open.flagged, 'OpenGuardrails: fail-open on outage');
 
   srv.close();
+}
+
+function waitTcp(port: number, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const tryOnce = (): Promise<void> =>
+    new Promise((res, rej) => {
+      const s = connect(port, '127.0.0.1');
+      s.on('connect', () => { s.destroy(); res(); });
+      s.on('error', () => {
+        if (Date.now() > deadline) rej(new Error(`tcp :${port} timeout`));
+        else setTimeout(() => tryOnce().then(res, rej), 120);
+      });
+    });
+  return tryOnce();
+}
+
+function loadTls(agentId: string): ClientTls {
+  return {
+    ca: readFileSync(resolve(TLS_DIR, 'ca.crt')),
+    cert: readFileSync(resolve(TLS_CLIENTS_DIR, `${agentId}.crt`)),
+    key: readFileSync(resolve(TLS_CLIENTS_DIR, `${agentId}.key`)),
+  };
+}
+
+// mTLS phase: runs its own gateway over HTTPS with channel binding.
+async function testMtls() {
+  const { execFileSync } = await import('node:child_process');
+  const sh = (args: string[]) => execFileSync('node', args, { cwd: ROOT, stdio: 'ignore' });
+  // openssl required; skip gracefully if absent.
+  try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); }
+  catch { console.log('SKIP mTLS tests (openssl not found)'); return; }
+
+  sh(['src/cli/index.ts', 'tls', 'init', '--force']);
+  sh(['src/cli/index.ts', 'enroll', '--agent', 'mtls-a', '--role', 'demo-agent', '--force', '--mtls']);
+  sh(['src/cli/index.ts', 'enroll', '--agent', 'mtls-b', '--role', 'demo-agent', '--force', '--mtls']);
+
+  const gw = spawn('node', ['src/gateway/index.ts'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, AGENTZT_TLS: '1' } });
+  try {
+    await waitTcp(8700);
+    const tlsA = loadTls('mtls-a');
+    const tlsB = loadTls('mtls-b');
+
+    // 1. No client cert -> TLS handshake rejected (requestCert + rejectUnauthorized).
+    const noCert = await new Promise<boolean>((res) => {
+      const req = httpsRequest({ hostname: '127.0.0.1', port: 8700, path: '/healthz', method: 'GET', ca: tlsA.ca, servername: 'localhost' }, (r) => { r.resume(); res(false); });
+      req.on('error', () => res(true));
+      req.end();
+    });
+    check(noCert, 'mTLS rejects a connection presenting no client certificate');
+
+    // 2. Valid client cert -> accepted.
+    const ok = await transportRequest('https://localhost:8700/healthz', { method: 'GET', headers: {}, tls: tlsA });
+    check(ok.status === 200, 'mTLS accepts a valid client certificate');
+
+    // 3. Channel binding: token for mtls-a presented over mtls-b's channel -> 401.
+    const idA = AgentIdentity.fromFile(resolve(IDENTITIES_DIR, 'mtls-a.json'));
+    const tokResp = await transportRequest('https://localhost:8700/v1/token', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ assertion: idA.makeAssertion(AUD) })), tls: tlsA,
+    });
+    const tokenA = JSON.parse(tokResp.body.toString('utf8')).access_token as string;
+    const mismatched = await transportRequest('https://localhost:8700/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${tokenA}` },
+      body: Buffer.from(JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] })),
+      tls: tlsB, // wrong channel: cert CN=mtls-b, token sub=mtls-a
+    });
+    check(mismatched.status === 401, 'channel binding rejects a token used over a mismatched cert channel');
+
+    // 4. Same token over the correct channel -> allowed.
+    const matched = await transportRequest('https://localhost:8700/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${tokenA}` },
+      body: Buffer.from(JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] })),
+      tls: tlsA,
+    });
+    check(matched.status === 200, 'token used over its own cert channel is allowed');
+  } finally {
+    gw.kill('SIGTERM');
+  }
 }
 
 let gateway: ChildProcess | null = null;
@@ -216,6 +301,12 @@ async function main() {
     body: JSON.stringify({ kind: 'model', name: 'claude-opus-4-8', reason: 'test' }),
   });
   check(badElev.status === 403, 'JIT: non-elevatable resource is refused');
+
+  // 14. Mutual TLS (own HTTPS gateway; stop the HTTP one first to free the port).
+  gateway?.kill('SIGTERM');
+  gateway = null;
+  await new Promise((r) => setTimeout(r, 400));
+  await testMtls();
 
   console.log(`\n${pass} passed, ${fail} failed`);
 }
