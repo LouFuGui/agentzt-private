@@ -38,7 +38,7 @@ export class VaultClient {
   private secretPaths: VaultSecretPaths;
   private token: string = '';
   private tokenExpiry: number = 0;
-  private secretCache: Map<string, { data: SecretData; expiry: number }> = new Map();
+  private secretCache: Map<string, { secret: VaultSecret; expiry: number }> = new Map();
   private leaseIds: Set<string> = new Set();
   private renewalIntervalId?: NodeJS.Timeout;
 
