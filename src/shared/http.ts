@@ -6,6 +6,10 @@ export const AGENT_ID_HEADER = 'x-agentzt-agent-id';
 // fulfils it via /v1/elevate and attaches the resulting grant on this header.
 export const ELEVATE_HEADER = 'x-agentzt-elevate';
 export const ELEVATION_HEADER = 'x-agentzt-elevation';
+// Application selector header - used to identify which app configuration to use
+export const APP_ID_HEADER = 'x-agentzt-app-id';
+// API Key header - alternative to Bearer token for app authentication
+export const API_KEY_HEADER = 'x-agentzt-api-key';
 
 export async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];

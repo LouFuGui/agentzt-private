@@ -1,0 +1,18 @@
+[
+  {
+    "userId": "user_e0de8469-d226-41f8-81b5-b4a0e8340dbd",
+    "email": "test@example.com",
+    "passwordHash": "98988cda4b324566419b041ff4c963ab9aaaffa2216611bd97ccff9446cd6cda:41fbd4b4d112d3e7b5714340c807456f2197db1b9a42acd45a1440c97ee56e05a418e332013b36e80f8d31203beaed11e1b3d92f20a3c77f28ea8044c4694d44",
+    "role": "viewer",
+    "createdAt": "2026-06-21T10:27:15.309Z",
+    "tier": "personal"
+  },
+  {
+    "userId": "user_af823401-8310-4ace-99a3-d6aebb218075",
+    "email": "duplicate@example.com",
+    "passwordHash": "3e71a4cd1279cc2d09aae2b949c10ff28fd782c83fe6500aaa05ddc92e0e0894:0a4a0320d4c85156c7cfddf04cbd2f2073018ca14f4dc32a305ea1ae55a3606a9aeaf5717dc01269a4ae0db37ec2db1fec75b3401eab94426599c2c0a3eb6973",
+    "role": "viewer",
+    "createdAt": "2026-06-21T10:27:15.373Z",
+    "tier": "personal"
+  }
+]

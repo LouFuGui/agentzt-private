@@ -1,0 +1,2952 @@
+openapi: 3.0.3
+info:
+  title: AgentZT Gateway Management API
+  description: |
+    AgentZT Gateway 管理API提供完整的应用管理、配置管理、统计分析、配额管理和告警管理功能。
+    
+    ## 认证
+    
+    所有管理API需要Bearer Token认证。在请求头中添加：
+    
+    ```
+    Authorization: Bearer <your-session-token>
+    ```
+    
+    或使用API Key：
+    
+    ```
+    X-AgentZT-API-Key: <your-api-key>
+    ```
+    
+    ## 应用选择
+    
+    多应用场景下，可通过以下方式指定应用：
+    
+    - 请求头：`X-AgentZT-App-ID: <appId>`
+    - 请求头：`X-AgentZT-API-Key: <apiKey>`
+    - 查询参数：`?appId=<appId>`
+    
+    ## 错误处理
+    
+    所有错误响应遵循统一格式：
+    
+    ```json
+    {
+      "error": {
+        "code": "error_code",
+        "message": "Error description",
+        "details": {}
+      }
+    }
+    ```
+    
+    ## 版本
+    
+    当前API版本为v1，默认路径 `/api` 等同于 `/api/v1`。
+  version: 1.0.0
+  contact:
+    name: AgentZT Team
+    email: support@agentzt.io
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:3000/api
+    description: 本地开发服务器
+  - url: https://gateway.agentzt.io/api
+    description: 生产服务器
+
+tags:
+  - name: Authentication
+    description: 用户认证相关API
+  - name: Apps
+    description: 应用管理API
+  - name: Config
+    description: 配置管理API
+  - name: Stats
+    description: 统计分析API
+  - name: Quota
+    description: 配额管理API
+  - name: Alerts
+    description: 告警管理API
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Session Token认证
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-AgentZT-API-Key
+      description: API Key认证
+
+  schemas:
+    # ========== Common Schemas ==========
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - authentication_error
+                - permission_error
+                - not_found
+                - invalid_request
+                - validation_error
+                - conflict_error
+                - rate_limit_exceeded
+                - internal_error
+                - service_unavailable
+              example: invalid_request
+            message:
+              type: string
+              example: App name must be between 1 and 100 characters
+            details:
+              type: object
+              additionalProperties: true
+            requestId:
+              type: string
+              example: req-1699887600000-abc123
+            timestamp:
+              type: string
+              format: date-time
+              example: '2024-01-15T10:30:00Z'
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation completed successfully
+
+    # ========== User Schemas ==========
+    UserRole:
+      type: string
+      enum:
+        - owner
+        - admin
+        - viewer
+      description: 用户角色
+
+    UserTier:
+      type: string
+      enum:
+        - personal
+        - business
+        - enterprise
+      description: 用户层级
+
+    User:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: user-1699887600000-abc123
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        role:
+          $ref: '#/components/schemas/UserRole'
+        tier:
+          $ref: '#/components/schemas/UserTier'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2024-01-15T10:30:00Z'
+
+    SessionToken:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: 有效期（秒）
+          example: 86400
+
+    RefreshToken:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJFZERTQSIsInR5cCI6IkFnZW50WlQtcmVmcmVzaC10b2tlbiJ9...
+        expiresIn:
+          type: integer
+          description: 有效期（秒）
+          example: 604800
+
+    # ========== App Schemas ==========
+    AppId:
+      type: string
+      pattern: '^app-[0-9]+-[a-z0-9]+$'
+      example: app-1699887600000-abc123
+
+    RiskTypeConfig:
+      type: object
+      properties:
+        security:
+          type: boolean
+          description: 安全风险检测
+          example: true
+        compliance:
+          type: boolean
+          description: 合规风险检测
+          example: true
+        dataSecurity:
+          type: boolean
+          description: 数据安全风险检测
+          example: true
+
+    RiskCategoriesConfig:
+      type: object
+      description: 风险类别配置（S1-S19）
+      properties:
+        S1:
+          type: boolean
+          description: Prompt Injection
+        S2:
+          type: boolean
+          description: Jailbreak
+        S3:
+          type: boolean
+          description: Toxic Content
+        S4:
+          type: boolean
+          description: Bias & Fairness
+        S5:
+          type: boolean
+          description: PII Leakage
+        S6:
+          type: boolean
+          description: Sensitive Data
+        S7:
+          type: boolean
+          description: Harmful Content
+        S8:
+          type: boolean
+          description: Sexual Content
+        S9:
+          type: boolean
+          description: Hate Speech
+        S10:
+          type: boolean
+          description: Violence
+        S11:
+          type: boolean
+          description: Self-Harm
+        S12:
+          type: boolean
+          description: Malware
+        S13:
+          type: boolean
+          description: Fraud
+        S14:
+          type: boolean
+          description: Misinformation
+        S15:
+          type: boolean
+          description: Political Manipulation
+        S16:
+          type: boolean
+          description: Competitive Intelligence
+        S17:
+          type: boolean
+          description: Code Vulnerability
+        S18:
+          type: boolean
+          description: Data Exfiltration
+        S19:
+          type: boolean
+          description: Unauthorized Actions
+      example:
+        S1: true
+        S2: true
+        S3: true
+        S4: true
+        S5: true
+        S6: true
+        S7: true
+        S8: true
+        S9: true
+        S10: true
+        S11: true
+        S12: true
+        S13: true
+        S14: true
+        S15: true
+        S16: true
+        S17: true
+        S18: true
+        S19: true
+
+    BlacklistWhitelist:
+      type: object
+      properties:
+        blacklist:
+          type: array
+          items:
+            type: string
+          description: 黑名单关键词列表
+          example: ['password', 'secret', 'pattern:regex.*']
+        whitelist:
+          type: array
+          items:
+            type: string
+          description: 白名单关键词列表
+          example: ['allowed_term']
+
+    ResponseTemplates:
+      type: object
+      properties:
+        reject:
+          type: string
+          description: 拒绝响应模板
+          example: 'Your request cannot be processed due to security policy.'
+        replace:
+          type: string
+          description: 替换响应模板
+          example: 'I apologize, but I cannot provide that information.'
+
+    SensitivityConfig:
+      type: object
+      properties:
+        level:
+          type: string
+          enum:
+            - high
+            - medium
+            - low
+          description: 敏感度级别
+          example: medium
+        threshold:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 风险阈值
+          example: 0.7
+
+    BanPolicy:
+      type: object
+      properties:
+        bannedUsers:
+          type: array
+          items:
+            type: string
+          description: 已封禁用户列表
+          example: ['user-xxx', 'user-yyy']
+        autoBanThreshold:
+          type: integer
+          minimum: 0
+          description: 自动封禁阈值（违规次数）
+          example: 3
+
+    KnowledgeBaseEntry:
+      type: object
+      properties:
+        question:
+          type: string
+          example: 'What is the security policy?'
+        answer:
+          type: string
+          example: 'The security policy defines...'
+
+    KnowledgeBase:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeBaseEntry'
+
+    AppConfig:
+      type: object
+      properties:
+        riskTypes:
+          $ref: '#/components/schemas/RiskTypeConfig'
+        riskCategories:
+          $ref: '#/components/schemas/RiskCategoriesConfig'
+        blacklistWhitelist:
+          $ref: '#/components/schemas/BlacklistWhitelist'
+        responseTemplates:
+          $ref: '#/components/schemas/ResponseTemplates'
+        sensitivity:
+          $ref: '#/components/schemas/SensitivityConfig'
+        banPolicy:
+          $ref: '#/components/schemas/BanPolicy'
+        knowledgeBase:
+          $ref: '#/components/schemas/KnowledgeBase'
+
+    AppQuota:
+      type: object
+      properties:
+        checksLimit:
+          type: integer
+          description: 检查次数上限
+          example: 10000
+        checksUsed:
+          type: integer
+          description: 已使用检查次数
+          example: 150
+        tokensLimit:
+          type: integer
+          description: Token数量上限
+          example: 1000000
+        tokensUsed:
+          type: integer
+          description: 已使用Token数量
+          example: 25000
+
+    App:
+      type: object
+      properties:
+        appId:
+          $ref: '#/components/schemas/AppId'
+        name:
+          type: string
+          example: My Application
+        apiKey:
+          type: string
+          description: API Key（仅在创建/重新生成时返回）
+          example: agt_sk_xxx...
+        modelApiKey:
+          type: string
+          description: Model API Key（仅在创建/重新生成时返回）
+          example: agt_mk_xxx...
+        config:
+          $ref: '#/components/schemas/AppConfig'
+        quota:
+          $ref: '#/components/schemas/AppQuota'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2024-01-15T10:30:00Z'
+        ownerId:
+          type: string
+          example: user-1699887600000-abc123
+
+    AppListResponse:
+      type: object
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: '#/components/schemas/App'
+        total:
+          type: integer
+          example: 5
+
+    # ========== Stats Schemas ==========
+    TimeRange:
+      type: string
+      enum:
+        - day
+        - week
+        - month
+        - year
+      description: 时间范围
+
+    Granularity:
+      type: string
+      enum:
+        - hour
+        - day
+      description: 数据粒度
+
+    StatsOverview:
+      type: object
+      properties:
+        totalDetections:
+          type: integer
+          description: 总检测次数
+          example: 10000
+        todayDetections:
+          type: integer
+          description: 今日检测次数
+          example: 150
+        passRate:
+          type: number
+          format: float
+          description: 通过率（0-1）
+          example: 0.85
+        blockRate:
+          type: number
+          format: float
+          description: 阻断率（0-1）
+          example: 0.10
+        flagRate:
+          type: number
+          format: float
+          description: 标记率（0-1）
+          example: 0.05
+        avgLatencyMs:
+          type: integer
+          description: 平均延迟（毫秒）
+          example: 150
+        totalTokens:
+          type: integer
+          description: 总Token数量
+          example: 500000
+
+    RiskDistribution:
+      type: object
+      properties:
+        byLevel:
+          type: object
+          properties:
+            no_risk:
+              type: integer
+            low_risk:
+              type: integer
+            medium_risk:
+              type: integer
+            high_risk:
+              type: integer
+          example:
+            no_risk: 8500
+            low_risk: 500
+            medium_risk: 800
+            high_risk: 200
+        byCategory:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            S1: 150
+            S2: 100
+            S3: 200
+        byApp:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            app-xxx: 5000
+            app-yyy: 5000
+
+    TrendDataPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        detections:
+          type: integer
+        passRate:
+          type: number
+          format: float
+        blockRate:
+          type: number
+          format: float
+
+    TrendResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendDataPoint'
+        timeRange:
+          $ref: '#/components/schemas/TimeRange'
+        granularity:
+          $ref: '#/components/schemas/Granularity'
+
+    # ========== Quota Schemas ==========
+    QuotaType:
+      type: string
+      enum:
+        - checks
+        - tokens
+        - agents
+
+    QuotaUsage:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/QuotaType'
+        used:
+          type: integer
+        limit:
+          type: integer
+        percentage:
+          type: number
+          format: float
+        remaining:
+          type: integer
+
+    QuotaUsageResponse:
+      type: object
+      properties:
+        appId:
+          $ref: '#/components/schemas/AppId'
+        checks:
+          $ref: '#/components/schemas/QuotaUsage'
+        tokens:
+          $ref: '#/components/schemas/QuotaUsage'
+        alerts:
+          type: object
+          properties:
+            checks:
+              type: array
+              items:
+                type: object
+                properties:
+                  threshold:
+                    type: integer
+                  triggered:
+                    type: boolean
+            tokens:
+              type: array
+              items:
+                type: object
+                properties:
+                  threshold:
+                    type: integer
+                  triggered:
+                    type: boolean
+
+    QuotaHistoryEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        appId:
+          $ref: '#/components/schemas/AppId'
+        type:
+          $ref: '#/components/schemas/QuotaType'
+        delta:
+          type: integer
+        totalUsed:
+          type: integer
+        limit:
+          type: integer
+        requestId:
+          type: string
+        resource:
+          type: string
+
+    QuotaHistoryResponse:
+      type: object
+      properties:
+        appId:
+          $ref: '#/components/schemas/AppId'
+        timeRange:
+          type: string
+          enum:
+            - day
+            - week
+            - month
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuotaHistoryEntry'
+        aggregated:
+          type: object
+          properties:
+            checks:
+              type: object
+              properties:
+                total:
+                  type: integer
+                count:
+                  type: integer
+                avgDelta:
+                  type: number
+            tokens:
+              type: object
+              properties:
+                total:
+                  type: integer
+                count:
+                  type: integer
+                avgDelta:
+                  type: number
+
+    # ========== Alert Schemas ==========
+    AlertType:
+      type: string
+      enum:
+        - quota_exceeded
+        - high_risk_detected
+        - rate_limit_exceeded
+        - security_event
+        - system_error
+
+    AlertSeverity:
+      type: string
+      enum:
+        - low
+        - medium
+        - high
+        - critical
+
+    AlertStatus:
+      type: string
+      enum:
+        - active
+        - acknowledged
+        - resolved
+
+    Alert:
+      type: object
+      properties:
+        alertId:
+          type: string
+        type:
+          $ref: '#/components/schemas/AlertType'
+        severity:
+          $ref: '#/components/schemas/AlertSeverity'
+        status:
+          $ref: '#/components/schemas/AlertStatus'
+        message:
+          type: string
+        appId:
+          $ref: '#/components/schemas/AppId'
+        userId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        acknowledgedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true
+
+    AlertListResponse:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        total:
+          type: integer
+
+  parameters:
+    AppIdParam:
+      name: appId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/AppId'
+      description: 应用ID
+
+    AppIdQueryParam:
+      name: appId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/AppId'
+      description: 应用ID（可选）
+
+    TimeRangeParam:
+      name: timeRange
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/TimeRange'
+      description: 时间范围
+
+    GranularityParam:
+      name: granularity
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Granularity'
+      description: 数据粒度
+
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+      description: 返回数量限制
+
+paths:
+  # ========== Authentication API ==========
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: 用户注册
+      description: 创建新用户账户并返回会话令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: securePassword123
+                role:
+                  $ref: '#/components/schemas/UserRole'
+                tier:
+                  $ref: '#/components/schemas/UserTier'
+            example:
+              email: user@example.com
+              password: securePassword123
+              tier: personal
+      responses:
+        '201':
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  session:
+                    $ref: '#/components/schemas/SessionToken'
+                  refreshToken:
+                    $ref: '#/components/schemas/RefreshToken'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: 用户登录
+      description: 使用邮箱和密码登录，获取会话令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: securePassword123
+            example:
+              email: user@example.com
+              password: securePassword123
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  session:
+                    $ref: '#/components/schemas/SessionToken'
+                  refreshToken:
+                    $ref: '#/components/schemas/RefreshToken'
+        '401':
+          description: 认证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: 刷新会话令牌
+      description: 使用刷新令牌获取新的会话令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  example: eyJhbGciOiJFZERTQSIsInR5cCI6IkFnZW50WlQtcmVmcmVzaC10b2tlbiJ9...
+            example:
+              refreshToken: eyJhbGciOiJFZERTQSIsInR5cCI6IkFnZW50WlQtcmVmcmVzaC10b2tlbiJ9...
+      responses:
+        '200':
+          description: 刷新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: '#/components/schemas/SessionToken'
+                  refreshToken:
+                    $ref: '#/components/schemas/RefreshToken'
+        '401':
+          description: 刷新令牌无效或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: 用户登出
+      description: 撤销当前会话令牌
+      responses:
+        '200':
+          description: 登出成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Logged out successfully
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: 获取当前用户信息
+      description: 返回当前认证用户的详细信息
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ========== Apps API ==========
+  /apps:
+    get:
+      tags:
+        - Apps
+      summary: 获取应用列表
+      description: 返回用户拥有的所有应用列表
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppListResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - Apps
+      summary: 创建新应用
+      description: 创建一个新的应用并返回API Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  example: My Application
+                tier:
+                  $ref: '#/components/schemas/UserTier'
+            example:
+              name: My Application
+              tier: business
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Apps
+      summary: 获取应用详情
+      description: 返回指定应用的详细信息
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 应用不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Apps
+      summary: 更新应用
+      description: 更新指定应用的名称或配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  example: Updated Application Name
+                config:
+                  type: object
+                  description: 部分配置更新
+                quota:
+                  type: object
+                  description: 配额更新（仅管理员）
+            example:
+              name: Updated Application Name
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 应用不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Apps
+      summary: 删除应用
+      description: 删除指定应用（不可恢复）
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Application "app-xxx" deleted
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 应用不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/regenerate-key:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    post:
+      tags:
+        - Apps
+      summary: 重新生成API Key
+      description: 重新生成应用的API Key和Model API Key
+      responses:
+        '200':
+          description: 重新生成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiKey:
+                    type: string
+                    example: agt_sk_new_xxx...
+                  modelApiKey:
+                    type: string
+                    example: agt_mk_new_xxx...
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 应用不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ========== Config API ==========
+  /apps/{appId}/config/risk-types:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取风险类型配置
+      description: 返回应用的风险类型配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskTypeConfig'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 应用不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Config
+      summary: 更新风险类型配置
+      description: 更新应用的风险类型配置（需要admin或owner权限）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                security:
+                  type: boolean
+                compliance:
+                  type: boolean
+                dataSecurity:
+                  type: boolean
+            example:
+              security: true
+              compliance: true
+              dataSecurity: false
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskTypeConfig'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/risk-categories:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取风险类别配置
+      description: 返回应用的风险类别配置（S1-S19）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategoriesConfig'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Config
+      summary: 更新风险类别配置
+      description: 更新应用的风险类别配置（需要admin或owner权限）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: boolean
+            example:
+              S1: true
+              S2: false
+              S3: true
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategoriesConfig'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/blacklist-whitelist:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取黑白名单配置
+      description: 返回应用的黑白名单配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlacklistWhitelist'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/blacklist:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    post:
+      tags:
+        - Config
+      summary: 添加黑名单关键词
+      description: 向黑名单添加关键词或正则表达式模式
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  example: ['password', 'secret']
+                patterns:
+                  type: array
+                  items:
+                    type: string
+                  example: ['regex.*', 'pattern.*']
+            example:
+              keywords: ['password', 'secret']
+      responses:
+        '200':
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+                    example: 2
+                  blacklist:
+                    type: array
+                    items:
+                      type: string
+                  whitelist:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Config
+      summary: 删除黑名单关键词
+      description: 从黑名单删除关键词
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - keywords
+              properties:
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  example: ['password']
+            example:
+              keywords: ['password']
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: integer
+                    example: 1
+                  blacklist:
+                    type: array
+                    items:
+                      type: string
+                  whitelist:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/whitelist:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    post:
+      tags:
+        - Config
+      summary: 添加白名单关键词
+      description: 向白名单添加关键词
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - keywords
+              properties:
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  example: ['allowed_term']
+            example:
+              keywords: ['allowed_term']
+      responses:
+        '200':
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+                    example: 1
+                  blacklist:
+                    type: array
+                    items:
+                      type: string
+                  whitelist:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Config
+      summary: 删除白名单关键词
+      description: 从白名单删除关键词
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - keywords
+              properties:
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  example: ['allowed_term']
+            example:
+              keywords: ['allowed_term']
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: integer
+                    example: 1
+                  blacklist:
+                    type: array
+                    items:
+                      type: string
+                  whitelist:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/response-templates:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取响应模板配置
+      description: 返回应用的响应模板配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseTemplates'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Config
+      summary: 更新响应模板配置
+      description: 更新应用的响应模板配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reject:
+                  type: string
+                  example: 'Your request cannot be processed due to security policy.'
+                replace:
+                  type: string
+                  example: 'I apologize, but I cannot provide that information.'
+            example:
+              reject: 'Your request cannot be processed due to security policy.'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseTemplates'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/sensitivity:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取敏感度配置
+      description: 返回应用的敏感度配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensitivityConfig'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Config
+      summary: 更新敏感度配置
+      description: 更新应用的敏感度配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                level:
+                  type: string
+                  enum:
+                    - high
+                    - medium
+                    - low
+                  example: medium
+                threshold:
+                  type: number
+                  format: float
+                  minimum: 0
+                  maximum: 1
+                  example: 0.7
+            example:
+              level: high
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SensitivityConfig'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/ban-policy:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取封禁策略配置
+      description: 返回应用的封禁策略配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BanPolicy'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Config
+      summary: 更新封禁策略配置
+      description: 更新应用的封禁策略配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bannedUsers:
+                  type: array
+                  items:
+                    type: string
+                  example: ['user-xxx']
+                autoBanThreshold:
+                  type: integer
+                  minimum: 0
+                  example: 3
+            example:
+              autoBanThreshold: 5
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BanPolicy'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/ban-policy/ban:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    post:
+      tags:
+        - Config
+      summary: 封禁用户
+      description: 将用户添加到封禁列表
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: string
+                  example: user-xxx
+                reason:
+                  type: string
+                  example: Violated security policy
+            example:
+              userId: user-xxx
+              reason: Violated security policy
+      responses:
+        '200':
+          description: 封禁成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  banned:
+                    type: string
+                    example: user-xxx
+                  reason:
+                    type: string
+                    example: Violated security policy
+                  bannedUsers:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效或用户已封禁
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Config
+      summary: 解封用户
+      description: 将用户从封禁列表移除
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+              properties:
+                userId:
+                  type: string
+                  example: user-xxx
+            example:
+              userId: user-xxx
+      responses:
+        '200':
+          description: 解封成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unbanned:
+                    type: string
+                    example: user-xxx
+                  bannedUsers:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: 请求参数无效或用户未封禁
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/knowledge-base:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+    get:
+      tags:
+        - Config
+      summary: 获取知识库
+      description: 返回应用的知识库条目列表
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        entryId:
+                          type: string
+                        question:
+                          type: string
+                        answer:
+                          type: string
+                  total:
+                    type: integer
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - Config
+      summary: 添加知识库条目
+      description: 向知识库添加新的问答条目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - question
+                - answer
+              properties:
+                question:
+                  type: string
+                  example: 'What is the security policy?'
+                answer:
+                  type: string
+                  example: 'The security policy defines...'
+            example:
+              question: 'What is the security policy?'
+              answer: 'The security policy defines acceptable use guidelines...'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entryId:
+                    type: string
+                  question:
+                    type: string
+                  answer:
+                    type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /apps/{appId}/config/knowledge-base/{entryId}:
+    parameters:
+      - $ref: '#/components/parameters/AppIdParam'
+      - name: entryId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: 知识库条目ID
+    put:
+      tags:
+        - Config
+      summary: 更新知识库条目
+      description: 更新指定知识库条目的内容
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                question:
+                  type: string
+                answer:
+                  type: string
+            example:
+              answer: 'Updated answer content...'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entryId:
+                    type: string
+                  question:
+                    type: string
+                  answer:
+                    type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 条目不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Config
+      summary: 删除知识库条目
+      description: 删除指定的知识库条目
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: string
+                  remaining:
+                    type: integer
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 条目不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ========== Stats API ==========
+  /stats/overview:
+    get:
+      tags:
+        - Stats
+      summary: 获取统计概览
+      description: 返回指定时间范围内的统计概览数据
+      parameters:
+        - $ref: '#/components/parameters/TimeRangeParam'
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsOverview'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stats/risk-distribution:
+    get:
+      tags:
+        - Stats
+      summary: 获取风险分布
+      description: 返回指定时间范围内的风险分布数据
+      parameters:
+        - $ref: '#/components/parameters/TimeRangeParam'
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskDistribution'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stats/trend:
+    get:
+      tags:
+        - Stats
+      summary: 获取趋势数据
+      description: 返回指定时间范围和粒度的趋势数据
+      parameters:
+        - $ref: '#/components/parameters/TimeRangeParam'
+        - $ref: '#/components/parameters/GranularityParam'
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendResponse'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stats/export:
+    get:
+      tags:
+        - Stats
+      summary: 导出统计数据
+      description: 导出统计数据为CSV或JSON格式
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - csv
+              - json
+            default: json
+          description: 导出格式
+        - $ref: '#/components/parameters/TimeRangeParam'
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overview:
+                    $ref: '#/components/schemas/StatsOverview'
+                  riskDistribution:
+                    $ref: '#/components/schemas/RiskDistribution'
+                  trend:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrendDataPoint'
+                  exportInfo:
+                    type: object
+                    properties:
+                      timeRange:
+                        $ref: '#/components/schemas/TimeRange'
+                      appId:
+                        type: string
+                      exportedAt:
+                        type: string
+                        format: date-time
+                      exportedBy:
+                        type: string
+            text/csv:
+              schema:
+                type: string
+                description: CSV格式统计数据
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ========== Quota API ==========
+  /quota/usage:
+    get:
+      tags:
+        - Quota
+      summary: 获取配额使用情况
+      description: 返回当前应用的配额使用情况
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaUsageResponse'
+        '400':
+          description: 缺少appId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /quota/history:
+    get:
+      tags:
+        - Quota
+      summary: 获取配额使用历史
+      description: 返回指定时间范围内的配额使用历史
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+        - name: timeRange
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - day
+              - week
+              - month
+            default: month
+          description: 时间范围
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - checks
+              - tokens
+          description: 配额类型
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaHistoryResponse'
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /quota/reset:
+    post:
+      tags:
+        - Quota
+      summary: 重置配额使用
+      description: 重置指定应用的配额使用（仅管理员）
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      responses:
+        '200':
+          description: 重置成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Quota usage reset for application "app-xxx"
+                  appId:
+                    $ref: '#/components/schemas/AppId'
+        '400':
+          description: 缺少appId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限（需要管理员权限）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /quota/limit:
+    put:
+      tags:
+        - Quota
+      summary: 设置配额限制
+      description: 设置指定应用的配额限制（仅管理员）
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                checksLimit:
+                  type: integer
+                  minimum: 0
+                  example: 10000
+                tokensLimit:
+                  type: integer
+                  minimum: 0
+                  example: 1000000
+            example:
+              checksLimit: 20000
+              tokensLimit: 2000000
+      responses:
+        '200':
+          description: 设置成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Quota limits updated for application "app-xxx"
+                  appId:
+                    $ref: '#/components/schemas/AppId'
+                  quota:
+                    type: object
+                    properties:
+                      checksLimit:
+                        type: integer
+                      tokensLimit:
+                        type: integer
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限（需要管理员权限）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /quota/alerts:
+    get:
+      tags:
+        - Quota
+      summary: 获取配额告警历史
+      description: 返回指定应用的配额告警历史
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - checks
+              - tokens
+          description: 配额类型
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appId:
+                    $ref: '#/components/schemas/AppId'
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        appId:
+                          $ref: '#/components/schemas/AppId'
+                        type:
+                          $ref: '#/components/schemas/QuotaType'
+                        threshold:
+                          type: integer
+                        percentage:
+                          type: number
+                          format: float
+                        used:
+                          type: integer
+                        limit:
+                          type: integer
+                        triggeredAt:
+                          type: string
+                          format: date-time
+                        message:
+                          type: string
+                  total:
+                    type: integer
+        '400':
+          description: 缺少appId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ========== Alerts API ==========
+  /alerts:
+    get:
+      tags:
+        - Alerts
+      summary: 获取告警列表
+      description: 返回告警列表
+      parameters:
+        - $ref: '#/components/parameters/AppIdQueryParam'
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AlertType'
+          description: 告警类型
+        - name: severity
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AlertSeverity'
+          description: 告警严重程度
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AlertStatus'
+          description: 告警状态
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertListResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /alerts/{alertId}:
+    parameters:
+      - name: alertId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: 告警ID
+    get:
+      tags:
+        - Alerts
+      summary: 获取告警详情
+      description: 返回指定告警的详细信息
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 告警不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /alerts/rules:
+    get:
+      tags:
+        - Alerts
+      summary: 获取告警规则
+      description: 返回告警规则配置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        type:
+                          $ref: '#/components/schemas/AlertType'
+                        condition:
+                          type: object
+                        enabled:
+                          type: boolean
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Alerts
+      summary: 更新告警规则
+      description: 更新告警规则配置（需要admin权限）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rules:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      enabled:
+                        type: boolean
+                      condition:
+                        type: object
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /alerts/settings:
+    get:
+      tags:
+        - Alerts
+      summary: 获取告警设置
+      description: 返回告警通知设置
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      recipients:
+                        type: array
+                        items:
+                          type: string
+                          format: email
+                  webhook:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      urls:
+                        type: array
+                        items:
+                          type: string
+                          format: uri
+                  dashboard:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Alerts
+      summary: 更新告警设置
+      description: 更新告警通知设置（需要admin权限）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    recipients:
+                      type: array
+                      items:
+                        type: string
+                        format: email
+                webhook:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    urls:
+                      type: array
+                      items:
+                        type: string
+                        format: uri
+                dashboard:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: 请求参数无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 无权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

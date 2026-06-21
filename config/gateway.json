@@ -29,5 +29,11 @@
     "certFile": ".agentzt/tls/server.crt",
     "caFile": ".agentzt/tls/ca.crt",
     "channelBinding": true
+  },
+  "sandbox": {
+    "_comment": "AIOsandbox integration for agent execution. enabled=true enables the sandbox. baseUrl is the AIOsandbox service address. autoStart=true will attempt to start the Docker container automatically.",
+    "enabled": true,
+    "baseUrl": "http://localhost:8080",
+    "autoStart": true
   }
 }

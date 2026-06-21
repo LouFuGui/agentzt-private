@@ -3,6 +3,8 @@
 // — validate tool call arguments before execution). Tools stay offline/canned
 // so the demo is self-contained; in production these wrap real internal APIs.
 
+import { aiosandboxManager, AIOsandboxClient } from './aiosandbox.ts';
+
 export type ToolContext = {
   agentId: string;
   role: string;
@@ -29,6 +31,109 @@ function requireString(args: Record<string, unknown>, key: string, max = 4096): 
   if (v.length > max) return `parameter "${key}" exceeds ${max} chars`;
   return null;
 }
+
+// ============== AIOsandbox 工具 ==============
+
+let sandboxClient: AIOsandboxClient | undefined;
+
+async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOsandboxClient> {
+  if (!sandboxClient) {
+    sandboxClient = new AIOsandboxClient({ baseUrl, autoStart: false });
+  }
+  return sandboxClient;
+}
+
+const SANDBOX_TOOLS: Record<string, ToolDef> = {
+  'sandbox.shell': {
+    name: 'sandbox.shell',
+    description: 'Execute a shell command in the isolated AIOsandbox environment.',
+    validate: (a) => requireString(a, 'command', 4096),
+    run: async (a, ctx) => {
+      const client = await getSandboxClient();
+      const result = await client.shellExec(String(a['command']), a['cwd'] as string | undefined);
+      if (result.success && result.data) {
+        return { ok: result.data.exitCode === 0, output: result.data };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+
+  'sandbox.file.read': {
+    name: 'sandbox.file.read',
+    description: 'Read a file from the AIOsandbox filesystem.',
+    validate: (a) => requireString(a, 'file', 4096),
+    run: async (a) => {
+      const client = await getSandboxClient();
+      const result = await client.fileRead(String(a['file']));
+      if (result.success && result.data) {
+        return { ok: true, output: result.data };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+
+  'sandbox.file.write': {
+    name: 'sandbox.file.write',
+    description: 'Write content to a file in the AIOsandbox filesystem.',
+    validate: (a) => requireString(a, 'file', 4096) ?? requireString(a, 'content', 1024 * 1024),
+    run: async (a) => {
+      const client = await getSandboxClient();
+      const result = await client.fileWrite(String(a['file']), String(a['content']));
+      if (result.success) {
+        return { ok: true, output: result.data };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+
+  'sandbox.browser.screenshot': {
+    name: 'sandbox.browser.screenshot',
+    description: 'Take a screenshot of the sandbox browser.',
+    validate: () => null,
+    run: async () => {
+      const client = await getSandboxClient();
+      const result = await client.browserScreenshot();
+      if (result.success && result.data) {
+        return { ok: true, output: result.data };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+
+  'sandbox.browser.navigate': {
+    name: 'sandbox.browser.navigate',
+    description: 'Navigate the sandbox browser to a URL.',
+    validate: (a) => {
+      const err = requireString(a, 'url', 4096);
+      if (err) return err;
+      const url = String(a['url']);
+      if (!/^https?:\/\//i.test(url)) return 'url must be http(s)';
+      return null;
+    },
+    run: async (a) => {
+      const client = await getSandboxClient();
+      const result = await client.browserNavigate(String(a['url']));
+      if (result.success) {
+        return { ok: true, output: { navigated: true } };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+
+  'sandbox.jupyter.execute': {
+    name: 'sandbox.jupyter.execute',
+    description: 'Execute Python code in the sandbox Jupyter environment.',
+    validate: (a) => requireString(a, 'code', 1024 * 100),
+    run: async (a) => {
+      const client = await getSandboxClient();
+      const result = await client.jupyterExecute(String(a['code']));
+      if (result.success && result.data) {
+        return { ok: true, output: result.data };
+      }
+      return { ok: false, error: result.error };
+    },
+  },
+};
 
 const KB: Record<string, string> = {
   'zero-trust':
@@ -120,5 +225,5 @@ export const TOOLS: Record<string, ToolDef> = {
 };
 
 export function getTool(name: string): ToolDef | undefined {
-  return TOOLS[name];
+  return TOOLS[name] ?? SANDBOX_TOOLS[name];
 }

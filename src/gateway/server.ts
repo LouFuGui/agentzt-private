@@ -11,13 +11,28 @@ import {
   headerValue,
   REQUEST_ID_HEADER,
   ELEVATION_HEADER,
+  APP_ID_HEADER,
+  API_KEY_HEADER,
 } from '../shared/http.ts';
 import { newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
 import { AuditLogger } from '../shared/audit.ts';
 import { AUDIT_DIR, TLS_DIR } from '../shared/paths.ts';
 import { resolve } from 'node:path';
-import type { GatewayTlsConfig } from '../shared/types.ts';
+import type {
+  GatewayTlsConfig,
+  GatewayConfig,
+  AccessTokenClaims,
+  GuardrailConfig,
+  AuthResult,
+  App,
+  GuardrailsCheckRequest,
+  GuardrailsCheckResponse,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  SimpleMessage,
+  RiskLevel,
+} from '../shared/types.ts';
 import { loadGatewayConfig, loadPolicy } from '../shared/config.ts';
 import { loadOrCreateGatewayKey } from './gateway-key.ts';
 import { IdentityStore } from './identity-store.ts';
@@ -28,7 +43,8 @@ import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
 import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
-import type { AccessTokenClaims, GuardrailConfig } from '../shared/types.ts';
+import { getAppStore } from '../api/app-store.ts';
+import { validateApiKeyAndGetApp } from '../api/apps.ts';
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
   provider: 'auto',
@@ -123,6 +139,170 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     return claims;
   }
 
+  /**
+   * Extended authorization supporting both Agent Token and API Key.
+   * Returns AuthResult with the authentication type and associated context.
+   */
+  function authorizeExtended(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): AuthResult | null {
+    // Try Agent Token first (existing flow)
+    const token = bearerToken(req);
+    if (token) {
+      // Check if it's an API Key format (sk-xxai-* or sk-xxai-model-*)
+      if (token.startsWith('sk-xxai-')) {
+        const app = validateApiKeyAndGetApp(token);
+        if (!app) {
+          sendError(res, 401, 'authentication_error', 'invalid API key');
+          return null;
+        }
+        return {
+          type: 'api_key',
+          app,
+          userId: app.ownerId,
+        };
+      }
+
+      // Regular Agent Token
+      try {
+        const claims = tokens.verifyAccessToken(token);
+        // Channel binding check
+        if (tls && tls.channelBinding) {
+          const cn = peerCN(req);
+          if (cn !== claims.sub) {
+            sendError(res, 401, 'authentication_error',
+              `channel binding failed: client cert CN "${cn}" != token subject "${claims.sub}"`);
+            return null;
+          }
+        }
+        return {
+          type: 'agent_token',
+          agentId: claims.sub,
+          role: claims.role,
+          scope: claims.scope,
+        };
+      } catch (err) {
+        sendError(res, 401, 'authentication_error', (err as Error).message);
+        return null;
+      }
+    }
+
+    // Check for API Key in header (alternative method)
+    const apiKeyHeader = headerValue(req, API_KEY_HEADER);
+    if (apiKeyHeader) {
+      const app = validateApiKeyAndGetApp(apiKeyHeader);
+      if (!app) {
+        sendError(res, 401, 'authentication_error', 'invalid API key in header');
+        return null;
+      }
+      return {
+        type: 'api_key',
+        app,
+        userId: app.ownerId,
+      };
+    }
+
+    // Check for App ID header (requires separate auth)
+    const appIdHeader = headerValue(req, APP_ID_HEADER);
+    if (appIdHeader) {
+      // App ID header alone is not enough for auth - need token or API key
+      sendError(res, 401, 'authentication_error', 'app ID header requires authentication');
+      return null;
+    }
+
+    sendError(res, 401, 'authentication_error', 'missing bearer token or API key');
+    return null;
+  }
+
+  /**
+   * Check application quota limits.
+   * Returns null if quota is OK, or error response if exceeded.
+   */
+  function checkQuota(
+    app: App,
+    res: ServerResponse,
+    rid: string,
+  ): { ok: boolean; reason?: string } {
+    const { quota } = app;
+    
+    // Check checks limit
+    if (quota.checksUsed >= quota.checksLimit) {
+      audit.record({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        appId: app.appId,
+        userId: app.ownerId,
+        action: 'quota.exceeded',
+        resource: 'checks',
+        decision: 'deny',
+        reason: `checks quota exceeded (${quota.checksUsed}/${quota.checksLimit})`,
+      });
+      sendError(res, 429, 'quota_exceeded', 
+        `checks quota exceeded (${quota.checksUsed}/${quota.checksLimit})`);
+      return { ok: false, reason: 'checks_quota' };
+    }
+
+    // Check tokens limit
+    if (quota.tokensUsed >= quota.tokensLimit) {
+      audit.record({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        appId: app.appId,
+        userId: app.ownerId,
+        action: 'quota.exceeded',
+        resource: 'tokens',
+        decision: 'deny',
+        reason: `tokens quota exceeded (${quota.tokensUsed}/${quota.tokensLimit})`,
+      });
+      sendError(res, 402, 'payment_required',
+        `tokens quota exceeded (${quota.tokensUsed}/${quota.tokensLimit})`);
+      return { ok: false, reason: 'tokens_quota' };
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Increment quota usage after successful operation.
+   */
+  function incrementUsage(appId: string, checksDelta: number = 1, tokensDelta: number = 0): void {
+    const store = getAppStore();
+    store.incrementQuotaUsage(appId, checksDelta, tokensDelta);
+  }
+
+  /**
+   * Load application-specific configuration for guardrails.
+   * Merges app config with default guardrails config.
+   */
+  function loadAppGuardrailConfig(app: App): GuardrailConfig {
+    const appConfig = app.config;
+    
+    // Build guardrail config from app settings
+    // The app config controls which risk types are enabled
+    const config: GuardrailConfig = {
+      provider: guardrails.provider,
+      input: { mode: guardrails.input.mode },
+      output: { 
+        redactSecrets: guardrails.output.redactSecrets,
+        check: guardrails.output.check,
+      },
+      openguardrails: guardrails.openguardrails,
+    };
+
+    // Apply sensitivity threshold from app config
+    // Higher sensitivity = stricter checking
+    if (appConfig.sensitivity.level === 'high') {
+      config.input.mode = 'block';
+    } else if (appConfig.sensitivity.level === 'low') {
+      config.input.mode = 'flag';
+    }
+
+    return config;
+  }
+
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
     const rid = requestId(req);
     res.setHeader(REQUEST_ID_HEADER, rid);
@@ -158,6 +338,21 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       if (method === 'POST' && path.startsWith('/v1/tools/')) {
         const name = decodeURIComponent(path.slice('/v1/tools/'.length));
         return await handleTool(req, res, rid, name);
+      }
+
+      // === Security Gateway Mode: Transparent Proxy ===
+      if (method === 'POST' && path.startsWith('/proxy/v1/')) {
+        return await handleProxy(req, res, rid, path.slice('/proxy/v1/'.length));
+      }
+
+      // === API Call Mode: Active Detection ===
+      if (method === 'POST' && path === '/v1/guardrails') {
+        return await handleGuardrailsCheck(req, res, rid);
+      }
+
+      // === Direct Model Access: Privacy-Preserving ===
+      if (method === 'POST' && path === '/v1/chat/completions') {
+        return await handleDirectModelAccess(req, res, rid);
       }
 
       return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
@@ -333,7 +528,8 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     }
 
     // --- ABAC: context-aware authorization (operating hours + risk-adaptive) --
-    const abac = policy.decideAbac(claims.role, { now: new Date(), riskLevel: inputVerdict?.riskLevel });
+    const riskLevelForAbac = inputVerdict?.riskLevel as RiskLevel | undefined;
+    const abac = policy.decideAbac(claims.role, { now: new Date(), riskLevel: riskLevelForAbac });
     if (!abac.allow) {
       audit.record({
         requestId: rid, agentId: claims.sub, role: claims.role,
@@ -475,6 +671,428 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     });
     log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
+  }
+
+  // ============================================================================
+  // Security Gateway Mode: Transparent Proxy (/proxy/v1/*)
+  // ============================================================================
+
+  /**
+   * Security Gateway Mode: Transparent proxy with automatic guardrail detection.
+   * - Reads messages from request body
+   * - Automatically calls guardrail detection
+   * - If passes, forwards to upstream Model API
+   * - If fails, returns 403 with security response
+   * - Preserves original request/response format
+   */
+  async function handleProxy(
+    req: IncomingMessage,
+    res: ServerResponse,
+    rid: string,
+    targetPath: string,
+  ): Promise<void> {
+    const auth = authorizeExtended(req, res);
+    if (!auth) return;
+    
+    const started = Date.now();
+    const body = await readJson<Record<string, unknown>>(req);
+    const model = typeof body['model'] === 'string' ? (body['model'] as string) : 'default';
+
+    // Get app context if API Key auth
+    const app = auth.type === 'api_key' ? auth.app : null;
+    
+    // Check quota for API Key auth
+    if (app) {
+      const quotaCheck = checkQuota(app, res, rid);
+      if (!quotaCheck.ok) return;
+    }
+
+    // Load app-specific guardrail config
+    const guardConfig = app ? loadAppGuardrailConfig(app) : guardrails;
+    const appGuard = createGuardrailProvider(guardConfig);
+
+    // Extract messages for guardrail check
+    const messages = flattenMessages(body);
+
+    // --- Input guardrail check ---
+    let inputVerdict = undefined;
+    if (guardConfig.input.mode !== 'off') {
+      inputVerdict = await appGuard.checkInput(messages);
+      
+      if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
+        const reason = `input guardrail blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
+        
+        audit.record({
+          requestId: rid,
+          agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
+          role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
+          appId: app?.appId ?? null,
+          userId: app?.ownerId ?? null,
+          action: 'proxy.call',
+          resource: model,
+          decision: 'deny',
+          reason,
+          categories: inputVerdict.categories,
+          score: inputVerdict.flagged ? 1 : 0,
+          meta: { stage: 'input', verdict: inputVerdict, targetPath },
+        });
+        
+        log.deny(`proxy.call blocked -> ${model}: ${reason}`);
+        
+        // Return security response
+        const rejectTemplate = app?.config.responseTemplates.reject ?? 
+          'Your request cannot be processed due to security policy.';
+        return sendJson(res, 403, {
+          type: 'error',
+          error: {
+            type: 'guardrail_blocked',
+            message: reason,
+            suggest_answer: inputVerdict.suggestAnswer ?? rejectTemplate,
+            categories: inputVerdict.categories,
+            risk_level: inputVerdict.riskLevel,
+          },
+        });
+      }
+    }
+
+    // --- Forward to upstream Model API ---
+    const result = await callModel(cfg, { model, body });
+    const latencyMs = Date.now() - started;
+
+    // --- Output guardrails ---
+    let outputVerdict = undefined;
+    let outRedactions = 0;
+    if (result.status === 200) {
+      const promptText = messages.map((m) => m.content).join('\n');
+      const responseText = extractText(result.body);
+      
+      if (guardConfig.output.check) {
+        outputVerdict = await appGuard.checkOutput(promptText, responseText);
+        if (outputVerdict.flagged && outputVerdict.action === 'replace' && outputVerdict.suggestAnswer) {
+          replaceText(result.body, outputVerdict.suggestAnswer);
+        } else if (outputVerdict.flagged && outputVerdict.action === 'reject') {
+          const replaceTemplate = app?.config.responseTemplates.replace ?? 
+            'I apologize, but I cannot provide that information.';
+          replaceText(result.body, replaceTemplate);
+        }
+      }
+      
+      if (guardConfig.output.redactSecrets) {
+        const r = redactSecretsDeep(result.body);
+        result.body = r.value;
+        outRedactions = r.count;
+      }
+    }
+
+    // Increment usage for API Key auth
+    if (app) {
+      const tokensUsed = (result.usage?.input_tokens ?? 0) + (result.usage?.output_tokens ?? 0);
+      incrementUsage(app.appId, 1, tokensUsed);
+    }
+
+    audit.record({
+      requestId: rid,
+      agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
+      role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
+      appId: app?.appId ?? null,
+      userId: app?.ownerId ?? null,
+      action: 'proxy.call',
+      resource: model,
+      decision: 'allow',
+      reason: 'passed guardrails',
+      latencyMs,
+      categories: [...(inputVerdict?.categories ?? []), ...(outputVerdict?.categories ?? [])],
+      score: (inputVerdict?.flagged ? 0.5 : 0) + (outputVerdict?.flagged ? 0.5 : 0),
+      meta: {
+        targetPath,
+        upstreamStatus: result.status,
+        usage: result.usage,
+        guardrailProvider: appGuard.name,
+        inputVerdict,
+        outputVerdict,
+        outputRedactions: outRedactions,
+      },
+    });
+
+    log.allow(`proxy.call -> ${model} (${latencyMs}ms)${outRedactions ? ` redacted:${outRedactions}` : ''}`);
+    return sendJson(res, result.status, result.body, { [REQUEST_ID_HEADER]: rid });
+  }
+
+  // ============================================================================
+  // API Call Mode: Active Detection (/v1/guardrails)
+  // ============================================================================
+
+  /**
+   * API Call Mode: Active guardrail detection without model call.
+   * - Accepts messages and detection options
+   * - Returns standard detection response format
+   * - No model API call, just detection
+   */
+  async function handleGuardrailsCheck(
+    req: IncomingMessage,
+    res: ServerResponse,
+    rid: string,
+  ): Promise<void> {
+    const auth = authorizeExtended(req, res);
+    if (!auth) return;
+
+    const started = Date.now();
+    const body = await readJson<GuardrailsCheckRequest>(req);
+
+    if (!body.messages || !Array.isArray(body.messages)) {
+      return sendError(res, 400, 'invalid_request', 'missing or invalid "messages" field');
+    }
+
+    // Get app context if API Key auth
+    const app = auth.type === 'api_key' ? auth.app : null;
+
+    // Check quota for API Key auth
+    if (app) {
+      const quotaCheck = checkQuota(app, res, rid);
+      if (!quotaCheck.ok) return;
+    }
+
+    // Load app-specific guardrail config
+    const guardConfig = app ? loadAppGuardrailConfig(app) : guardrails;
+    const appGuard = createGuardrailProvider(guardConfig);
+
+    // Apply detection options from request
+    const enableSecurity = body.enable_security ?? app?.config.riskTypes.security ?? true;
+    const enableCompliance = body.enable_compliance ?? app?.config.riskTypes.compliance ?? true;
+    const enableDataSecurity = body.enable_data_security ?? app?.config.riskTypes.dataSecurity ?? true;
+
+    // Run guardrail check
+    const verdict = await appGuard.checkInput(body.messages as SimpleMessage[]);
+    const latencyMs = Date.now() - started;
+
+    // Filter categories based on enabled risk types
+    let filteredCategories = verdict.categories;
+    if (!enableSecurity) {
+      filteredCategories = filteredCategories.filter(c => !c.startsWith('S') || ['S5', 'S6', 'S18'].includes(c));
+    }
+    if (!enableCompliance) {
+      filteredCategories = filteredCategories.filter(c => !['S4', 'S13', 'S14', 'S15'].includes(c));
+    }
+    if (!enableDataSecurity) {
+      filteredCategories = filteredCategories.filter(c => !['S5', 'S6', 'S18'].includes(c));
+    }
+
+    // Build response
+    const riskLevel = verdict.riskLevel as RiskLevel;
+    const response: GuardrailsCheckResponse = {
+      id: newId('gr'),
+      action: verdict.action,
+      risk_level: ['no_risk', 'low_risk', 'medium_risk', 'high_risk'].includes(riskLevel) 
+        ? riskLevel as 'no_risk' | 'low_risk' | 'medium_risk' | 'high_risk'
+        : 'no_risk',
+      categories: filteredCategories,
+      suggest_answer: verdict.suggestAnswer,
+      hit_keywords: verdict.patterns,
+      score: verdict.flagged ? 0.8 : 0.1,
+      processed_content: verdict.flagged && verdict.action === 'replace' ? verdict.suggestAnswer : undefined,
+      has_warning: verdict.flagged && verdict.action === 'pass',
+      was_replaced: verdict.flagged && verdict.action === 'replace',
+    };
+
+    // Increment usage for API Key auth
+    if (app) {
+      incrementUsage(app.appId, 1, 0);
+    }
+
+    audit.record({
+      requestId: rid,
+      agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
+      role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
+      appId: app?.appId ?? null,
+      userId: app?.ownerId ?? null,
+      action: 'guardrails.check',
+      resource: body.model ?? 'guardrails',
+      decision: verdict.flagged ? 'deny' : 'allow',
+      reason: verdict.flagged ? `detected: ${filteredCategories.join(', ')}` : 'no risk detected',
+      latencyMs,
+      categories: filteredCategories,
+      score: response.score,
+      meta: {
+        guardrailProvider: appGuard.name,
+        verdict,
+        enableSecurity,
+        enableCompliance,
+        enableDataSecurity,
+      },
+    });
+
+    log.info(`guardrails.check -> ${response.action} (${latencyMs}ms, categories=${filteredCategories.join(',')})`);
+    return sendJson(res, 200, response, { [REQUEST_ID_HEADER]: rid });
+  }
+
+  // ============================================================================
+  // Direct Model Access: Privacy-Preserving (/v1/chat/completions)
+  // ============================================================================
+
+  /**
+   * Direct Model Access: OpenAI-compatible endpoint with privacy guarantee.
+   * - Validates Model API Key (sk-xxai-model-*)
+   * - Directly calls detection model
+   * - Privacy: No message content stored, only usage count tracked
+   * - Returns OpenAI-compatible response
+   */
+  async function handleDirectModelAccess(
+    req: IncomingMessage,
+    res: ServerResponse,
+    rid: string,
+  ): Promise<void> {
+    const token = bearerToken(req);
+    if (!token) {
+      return sendError(res, 401, 'authentication_error', 'missing bearer token');
+    }
+
+    // Must be Model API Key format
+    if (!token.startsWith('sk-xxai-model-')) {
+      return sendError(res, 401, 'authentication_error', 
+        'Direct Model Access requires Model API Key (sk-xxai-model-*)');
+    }
+
+    // Validate Model API Key and get app
+    const app = validateApiKeyAndGetApp(token);
+    if (!app) {
+      return sendError(res, 401, 'authentication_error', 'invalid Model API Key');
+    }
+
+    const started = Date.now();
+    const body = await readJson<ChatCompletionRequest>(req);
+
+    if (!body.model || typeof body.model !== 'string') {
+      return sendError(res, 400, 'invalid_request', 'missing or invalid "model" field');
+    }
+
+    if (!body.messages || !Array.isArray(body.messages)) {
+      return sendError(res, 400, 'invalid_request', 'missing or invalid "messages" field');
+    }
+
+    // Check quota
+    const quotaCheck = checkQuota(app, res, rid);
+    if (!quotaCheck.ok) return;
+
+    // Load app-specific guardrail config
+    const guardConfig = loadAppGuardrailConfig(app);
+    const appGuard = createGuardrailProvider(guardConfig);
+
+    // Run guardrail check (privacy: no content stored)
+    const inputVerdict = await appGuard.checkInput(body.messages);
+
+    if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
+      const reason = `input guardrail blocked: ${inputVerdict.riskLevel}`;
+      
+      audit.record({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        appId: app.appId,
+        userId: app.ownerId,
+        action: 'direct.call',
+        resource: body.model,
+        decision: 'deny',
+        reason,
+        categories: inputVerdict.categories,
+        score: 1,
+        meta: { stage: 'input', verdict: { ...inputVerdict, patterns: undefined } },
+      });
+
+      // Privacy: Don't log message content
+      log.deny(`direct.call blocked -> ${body.model}: ${reason}`);
+
+      return sendJson(res, 403, {
+        id: newId('chat'),
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: body.model,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: app.config.responseTemplates.reject,
+          },
+          finish_reason: 'content_filter',
+        }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+    }
+
+    // Call model (privacy: content not logged)
+    const result = await callModel(cfg, { model: body.model, body: { ...body } });
+    const latencyMs = Date.now() - started;
+
+    // Process output
+    let outputContent = extractText(result.body);
+    let outputVerdict = undefined;
+    
+    if (result.status === 200 && guardConfig.output.check) {
+      const promptText = body.messages.map(m => m.content).join('\n');
+      outputVerdict = await appGuard.checkOutput(promptText, outputContent);
+      
+      if (outputVerdict.flagged) {
+        if (outputVerdict.action === 'replace' && outputVerdict.suggestAnswer) {
+          outputContent = outputVerdict.suggestAnswer;
+        } else if (outputVerdict.action === 'reject') {
+          outputContent = app.config.responseTemplates.replace;
+        }
+      }
+    }
+
+    // Estimate tokens (privacy: don't store actual content)
+    const promptTokens = Math.ceil(body.messages.map(m => m.content).join('').length / 4);
+    const completionTokens = Math.ceil(outputContent.length / 4);
+
+    // Increment usage (privacy: only count, no content stored)
+    incrementUsage(app.appId, 1, promptTokens + completionTokens);
+
+    // Build OpenAI-compatible response
+    const response: ChatCompletionResponse = {
+      id: newId('chat'),
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: body.model,
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: outputContent,
+        },
+        finish_reason: outputVerdict?.flagged ? 'content_filter' : 'stop',
+      }],
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
+      },
+    };
+
+    audit.record({
+      requestId: rid,
+      agentId: null,
+      role: null,
+      appId: app.appId,
+      userId: app.ownerId,
+      action: 'direct.call',
+      resource: body.model,
+      decision: 'allow',
+      reason: 'privacy-preserving model access',
+      latencyMs,
+      categories: [...(inputVerdict?.categories ?? []), ...(outputVerdict?.categories ?? [])],
+      score: (inputVerdict?.flagged ? 0.5 : 0) + (outputVerdict?.flagged ? 0.5 : 0),
+      meta: {
+        // Privacy: Only store counts, not content
+        promptTokens,
+        completionTokens,
+        guardrailProvider: appGuard.name,
+        inputFlagged: inputVerdict?.flagged,
+        outputFlagged: outputVerdict?.flagged,
+      },
+    });
+
+    // Privacy: Log only counts, not content
+    log.allow(`direct.call -> ${body.model} (${latencyMs}ms, tokens=${promptTokens + completionTokens})`);
+    return sendJson(res, 200, response, { [REQUEST_ID_HEADER]: rid });
   }
 
   return { server, port: cfg.port, tls: !!tls };

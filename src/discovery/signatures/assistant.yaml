@@ -1,0 +1,324 @@
+# ASSISTANT Agent Signatures
+# AI-powered coding assistants and productivity tools
+
+signatures:
+  - id: assistant-claude-code
+    name: Claude Code
+    type: ASSISTANT
+    description: |
+      Claude Code is Anthropic's official CLI assistant for coding,
+      providing intelligent code suggestions and development assistance.
+    vendor: https://www.anthropic.com/claude
+    version: "1.0.0"
+    processes:
+      - name: "claude"
+        cmdPattern: ".*claude.*code.*|.*claude-code.*"
+      - name: "node"
+        cmdPattern: ".*claude.*"
+        envPatterns:
+          ANTHROPIC_API_KEY: ".*"
+          CLAUDE_API_KEY: ".*"
+    files:
+      - path: "**/.claude/**"
+        exists: true
+      - path: "**/.claude.json"
+        exists: true
+      - path: "**/claude_desktop_config.json"
+        exists: true
+    network:
+      domains:
+        - "api.anthropic.com"
+        - "*.anthropic.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*api\\.anthropic\\.com/v1/.*"
+    riskLevel: medium
+    confidence: 90
+
+  - id: assistant-cursor
+    name: Cursor
+    type: ASSISTANT
+    description: |
+      Cursor is an AI-powered code editor built on VS Code,
+      featuring intelligent code completion and chat assistance.
+    vendor: https://cursor.sh
+    version: "1.0.0"
+    processes:
+      - name: "Cursor"
+        cmdPattern: ".*[Cc]ursor.*"
+      - name: "cursor"
+        cmdPattern: ".*cursor.*"
+      - name: "Cursor Helper"
+        cmdPattern: ".*"
+    files:
+      - path: "**/.cursor/**"
+        exists: true
+      - path: "**/AppData/Local/Programs/cursor/**"
+        exists: true
+      - path: "**/.cursorrc"
+        exists: true
+      - path: "**/cursor.json"
+        exists: true
+    network:
+      domains:
+        - "api.cursor.sh"
+        - "*.cursor.sh"
+        - "api.openai.com"
+        - "api.anthropic.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*cursor\\.sh/api/.*"
+    riskLevel: medium
+    confidence: 95
+
+  - id: assistant-github-copilot
+    name: GitHub Copilot
+    type: ASSISTANT
+    description: |
+      GitHub Copilot is an AI pair programmer that offers suggestions
+      from within editors like VS Code, Neovim, and JetBrains IDEs.
+    vendor: https://github.com/features/copilot
+    version: "1.0.0"
+    processes:
+      - name: "copilot"
+        cmdPattern: ".*copilot.*"
+      - name: "CopilotAgent"
+        cmdPattern: ".*"
+      - name: "node"
+        cmdPattern: ".*copilot.*|.*github-copilot.*"
+    files:
+      - path: "**/.github/copilot/**"
+        exists: true
+      - path: "**/.vscode/extensions/github.copilot*/**"
+        exists: true
+      - path: "**/extensions/github.copilot*/**"
+        exists: true
+    network:
+      domains:
+        - "api.github.com"
+        - "copilot.github.com"
+        - "*.github.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*github\\.com/copilot/.*"
+        - ".*api\\.github\\.com/copilot/.*"
+    riskLevel: low
+    confidence: 95
+
+  - id: assistant-chatgpt-desktop
+    name: ChatGPT Desktop
+    type: ASSISTANT
+    description: |
+      ChatGPT Desktop is the official desktop application for OpenAI's
+      ChatGPT, providing conversational AI assistance.
+    vendor: https://openai.com/chatgpt
+    version: "1.0.0"
+    processes:
+      - name: "ChatGPT"
+        cmdPattern: ".*[Cc]hat[Gg][Pp][Tt].*"
+      - name: "ChatGPT.exe"
+        cmdPattern: ".*"
+      - name: "ChatGPT.app"
+        cmdPattern: ".*"
+    files:
+      - path: "**/AppData/Local/Programs/ChatGPT/**"
+        exists: true
+      - path: "**/Applications/ChatGPT.app/**"
+        exists: true
+      - path: "**/.chatgpt/**"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+        - "chat.openai.com"
+        - "*.openai.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*chat\\.openai\\.com/.*"
+        - ".*api\\.openai\\.com/v1/.*"
+    riskLevel: low
+    confidence: 90
+
+  - id: assistant-windsurf
+    name: Windsurf
+    type: ASSISTANT
+    description: |
+      Windsurf is an AI-powered IDE from Codeium that provides
+      intelligent code completion and AI assistance.
+    vendor: https://codeium.com/windsurf
+    version: "1.0.0"
+    processes:
+      - name: "Windsurf"
+        cmdPattern: ".*[Ww]indsurf.*"
+      - name: "windsurf"
+        cmdPattern: ".*windsurf.*"
+    files:
+      - path: "**/.windsurf/**"
+        exists: true
+      - path: "**/AppData/Local/Programs/Windsurf/**"
+        exists: true
+      - path: "**/.windsurfrc"
+        exists: true
+    network:
+      domains:
+        - "api.codeium.com"
+        - "*.codeium.com"
+        - "windsurf.ai"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 85
+
+  - id: assistant-aider
+    name: Aider
+    type: ASSISTANT
+    description: |
+      Aider is an AI pair programming tool that works in the terminal,
+      allowing users to edit code with natural language commands.
+    vendor: https://aider.chat
+    version: "1.0.0"
+    processes:
+      - name: "aider"
+        cmdPattern: ".*aider.*"
+      - name: "python"
+        cmdPattern: ".*aider.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+          ANTHROPIC_API_KEY: ".*"
+    files:
+      - path: "**/.aider*"
+        exists: true
+      - path: "**/.aider.chat.history.md"
+        exists: true
+      - path: "**/.aider.input.history"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+        - "api.anthropic.com"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 85
+
+  - id: assistant-continue
+    name: Continue
+    type: ASSISTANT
+    description: |
+      Continue is an open-source AI code assistant extension for VS Code
+      and JetBrains that provides autocomplete and chat features.
+    vendor: https://continue.dev
+    version: "1.0.0"
+    processes:
+      - name: "continue"
+        cmdPattern: ".*continue.*"
+      - name: "node"
+        cmdPattern: ".*continue.*"
+    files:
+      - path: "**/.continue/**"
+        exists: true
+      - path: "**/.vscode/extensions/continue.continue*/**"
+        exists: true
+      - path: "**/continue.config.json"
+        exists: true
+    network:
+      domains:
+        - "api.continue.dev"
+        - "*.continue.dev"
+        - "api.openai.com"
+        - "api.anthropic.com"
+      ports:
+        - 443
+    riskLevel: low
+    confidence: 80
+
+  - id: assistant-tabnine
+    name: Tabnine
+    type: ASSISTANT
+    description: |
+      Tabnine is an AI code completion tool that provides
+      intelligent suggestions across multiple IDEs and languages.
+    vendor: https://www.tabnine.com
+    version: "1.0.0"
+    processes:
+      - name: "Tabnine"
+        cmdPattern: ".*[Tt]abnine.*"
+      - name: "tabnine-agent"
+        cmdPattern: ".*tabnine.*"
+    files:
+      - path: "**/.tabnine/**"
+        exists: true
+      - path: "**/AppData/Local/Tabnine/**"
+        exists: true
+      - path: "**/.tabnine_config"
+        exists: true
+    network:
+      domains:
+        - "api.tabnine.com"
+        - "*.tabnine.com"
+      ports:
+        - 443
+    riskLevel: low
+    confidence: 85
+
+  - id: assistant-cody
+    name: Sourcegraph Cody
+    type: ASSISTANT
+    description: |
+      Cody is an AI coding assistant from Sourcegraph that understands
+      code context and provides intelligent suggestions.
+    vendor: https://sourcegraph.com/cody
+    version: "1.0.0"
+    processes:
+      - name: "cody"
+        cmdPattern: ".*cody.*"
+      - name: "Cody"
+        cmdPattern: ".*[Cc]ody.*"
+    files:
+      - path: "**/.cody/**"
+        exists: true
+      - path: "**/.vscode/extensions/sourcegraph.cody*/**"
+        exists: true
+      - path: "**/.cody.json"
+        exists: true
+    network:
+      domains:
+        - "sourcegraph.com"
+        - "api.sourcegraph.com"
+        - "*.sourcegraph.com"
+      ports:
+        - 443
+    riskLevel: low
+    confidence: 80
+
+  - id: assistant-replit-ai
+    name: Replit AI
+    type: ASSISTANT
+    description: |
+      Replit AI is an AI-powered coding assistant integrated into
+      the Replit online development environment.
+    vendor: https://replit.com
+    version: "1.0.0"
+    processes:
+      - name: "replit"
+        cmdPattern: ".*replit.*"
+      - name: "repl"
+        cmdPattern: ".*replit.*"
+    files:
+      - path: "**/.replit"
+        exists: true
+      - path: "**/replit.nix"
+        exists: true
+    network:
+      domains:
+        - "replit.com"
+        - "api.replit.com"
+        - "*.replit.com"
+      ports:
+        - 443
+    riskLevel: low
+    confidence: 75

@@ -1,0 +1,370 @@
+# WORKFLOW Agent Signatures
+# AI-powered workflow automation and orchestration platforms
+
+signatures:
+  - id: workflow-dify
+    name: Dify
+    type: WORKFLOW
+    description: |
+      Dify is an open-source LLM application development platform that
+      enables building AI workflows and agents with visual orchestration.
+    vendor: https://dify.ai
+    version: "1.0.0"
+    processes:
+      - name: "dify"
+        cmdPattern: ".*dify.*"
+      - name: "docker"
+        cmdPattern: ".*dify.*"
+      - name: "python"
+        cmdPattern: ".*dify.*|.*flask.*dify.*"
+    files:
+      - path: "**/dify/**"
+        exists: true
+      - path: "**/.dify/**"
+        exists: true
+      - path: "**/dify/docker/**"
+        exists: true
+      - path: "**/docker-compose.dify.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.dify.ai"
+        - "*.dify.ai"
+        - "cloud.dify.ai"
+      ports:
+        - 443
+        - 5001
+        - 3000
+      urlPatterns:
+        - ".*dify\\.ai/v1/.*"
+        - ".*api\\.dify\\.ai/.*"
+    riskLevel: medium
+    confidence: 85
+
+  - id: workflow-n8n
+    name: n8n
+    type: WORKFLOW
+    description: |
+      n8n is a workflow automation platform that supports AI integrations
+      and allows building complex automation pipelines with AI nodes.
+    vendor: https://n8n.io
+    version: "1.0.0"
+    processes:
+      - name: "n8n"
+        cmdPattern: ".*n8n.*"
+      - name: "node"
+        cmdPattern: ".*n8n.*"
+    files:
+      - path: "**/.n8n/**"
+        exists: true
+      - path: "**/n8n/**"
+        exists: true
+      - path: "**/docker-compose.n8n.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.n8n.io"
+        - "*.n8n.io"
+        - "app.n8n.io"
+      ports:
+        - 5678
+        - 443
+      urlPatterns:
+        - ".*n8n\\.io/api/.*"
+        - ".*internal\\.n8n\\.io/.*"
+    riskLevel: medium
+    confidence: 90
+
+  - id: workflow-langflow
+    name: Langflow
+    type: WORKFLOW
+    description: |
+      Langflow is a visual framework for building multi-agent and RAG
+      applications with drag-and-drop interface for LangChain components.
+    vendor: https://github.com/langflow-ai/langflow
+    version: "1.0.0"
+    processes:
+      - name: "langflow"
+        cmdPattern: ".*langflow.*"
+      - name: "python"
+        cmdPattern: ".*langflow.*|.*uvicorn.*langflow.*"
+    files:
+      - path: "**/langflow/**"
+        exists: true
+      - path: "**/.langflow/**"
+        exists: true
+      - path: "**/langflow.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.langflow.org"
+        - "*.langflow.org"
+        - "langflow.org"
+      ports:
+        - 7860
+        - 443
+      urlPatterns:
+        - ".*langflow\\.org/api/.*"
+    riskLevel: medium
+    confidence: 85
+
+  - id: workflow-flowise
+    name: FlowiseAI
+    type: WORKFLOW
+    description: |
+      FlowiseAI is a drag-and-drop tool for building customized LLM
+      flows using LangChainJS with visual workflow design.
+    vendor: https://flowiseai.com
+    version: "1.0.0"
+    processes:
+      - name: "flowise"
+        cmdPattern: ".*flowise.*"
+      - name: "node"
+        cmdPattern: ".*flowise.*"
+    files:
+      - path: "**/.flowise/**"
+        exists: true
+      - path: "**/flowiseai/**"
+        exists: true
+      - path: "**/flowise/**"
+        exists: true
+    network:
+      domains:
+        - "flowiseai.com"
+        - "*.flowiseai.com"
+        - "api.flowiseai.com"
+      ports:
+        - 3000
+        - 443
+    riskLevel: medium
+    confidence: 80
+
+  - id: workflow-llamaindex
+    name: LlamaIndex
+    type: WORKFLOW
+    description: |
+      LlamaIndex is a data framework for LLM applications that enables
+      building RAG pipelines and agent workflows.
+    vendor: https://www.llamaindex.ai
+    version: "1.0.0"
+    processes:
+      - name: "llama"
+        cmdPattern: ".*llama.*index.*|.*llamaindex.*"
+      - name: "python"
+        cmdPattern: ".*llama_index.*|.*llamaindex.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/.llama/**"
+        exists: true
+      - path: "**/llama_index/**"
+        exists: true
+      - path: "**/.llamaindex*"
+        exists: true
+    network:
+      domains:
+        - "api.llamaindex.ai"
+        - "*.llamaindex.ai"
+        - "api.openai.com"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 75
+
+  - id: workflow-langchain
+    name: LangChain
+    type: WORKFLOW
+    description: |
+      LangChain is a framework for developing applications powered by
+      language models, including chains, agents, and retrieval strategies.
+    vendor: https://www.langchain.com
+    version: "1.0.0"
+    processes:
+      - name: "langchain"
+        cmdPattern: ".*langchain.*"
+      - name: "python"
+        cmdPattern: ".*langchain.*"
+        envPatterns:
+          LANGCHAIN_API_KEY: ".*"
+          LANGCHAIN_TRACING: ".*"
+    files:
+      - path: "**/.langchain/**"
+        exists: true
+      - path: "**/langchain/**"
+        exists: true
+      - path: "**/.langchainrc"
+        exists: true
+    network:
+      domains:
+        - "api.langchain.com"
+        - "*.langchain.com"
+        - "smith.langchain.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*api\\.langchain\\.com/.*"
+        - ".*smith\\.langchain\\.com/.*"
+    riskLevel: medium
+    confidence: 70
+
+  - id: workflow-crewai
+    name: CrewAI
+    type: WORKFLOW
+    description: |
+      CrewAI is a framework for orchestrating role-playing AI agents
+      that work together as a crew to accomplish complex tasks.
+    vendor: https://www.crewai.com
+    version: "1.0.0"
+    processes:
+      - name: "crewai"
+        cmdPattern: ".*crewai.*|.*crew.*"
+      - name: "python"
+        cmdPattern: ".*crewai.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/.crewai/**"
+        exists: true
+      - path: "**/crewai/**"
+        exists: true
+      - path: "**/crew.py"
+        exists: true
+      - path: "**/agents.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.crewai.com"
+        - "*.crewai.com"
+        - "api.openai.com"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 80
+
+  - id: workflow-autogen
+    name: Microsoft AutoGen
+    type: WORKFLOW
+    description: |
+      AutoGen is a framework from Microsoft for building multi-agent
+      conversations and enabling autonomous workflows between AI agents.
+    vendor: https://microsoft.github.io/autogen
+    version: "1.0.0"
+    processes:
+      - name: "autogen"
+        cmdPattern: ".*autogen.*"
+      - name: "python"
+        cmdPattern: ".*autogen.*|.*flaml.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+          AZURE_OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/.autogen/**"
+        exists: true
+      - path: "**/autogen/**"
+        exists: true
+      - path: "**/autogen_config.json"
+        exists: true
+      - path: "**/OAI_CONFIG_LIST"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+        - "*.openai.azure.com"
+      ports:
+        - 443
+    riskLevel: high
+    confidence: 85
+
+  - id: workflow-semantic-kernel
+    name: Microsoft Semantic Kernel
+    type: WORKFLOW
+    description: |
+      Semantic Kernel is an SDK from Microsoft that integrates LLMs
+      with programming languages for building AI orchestrations.
+    vendor: https://learn.microsoft.com/semantic-kernel
+    version: "1.0.0"
+    processes:
+      - name: "semantic-kernel"
+        cmdPattern: ".*semantic.*kernel.*"
+      - name: "dotnet"
+        cmdPattern: ".*Semantic.*Kernel.*"
+      - name: "python"
+        cmdPattern: ".*semantic_kernel.*"
+    files:
+      - path: "**/.semantic-kernel/**"
+        exists: true
+      - path: "**/semantic_kernel/**"
+        exists: true
+      - path: "**/skconfig.json"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+        - "*.openai.azure.com"
+        - "api.anthropic.com"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 75
+
+  - id: workflow-haystack
+    name: Haystack
+    type: WORKFLOW
+    description: |
+      Haystack is an open-source NLP framework for building production-ready
+      LLM applications, search systems, and RAG pipelines.
+    vendor: https://haystack.deepset.ai
+    version: "1.0.0"
+    processes:
+      - name: "haystack"
+        cmdPattern: ".*haystack.*"
+      - name: "python"
+        cmdPattern: ".*haystack.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/.haystack/**"
+        exists: true
+      - path: "**/haystack/**"
+        exists: true
+      - path: "**/haystack.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.haystack.deepset.ai"
+        - "*.deepset.ai"
+        - "api.openai.com"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 75
+
+  - id: workflow-composio
+    name: Composio
+    type: WORKFLOW
+    description: |
+      Composio is an integration platform for AI agents that provides
+      tools and connectors to interact with external applications.
+    vendor: https://composio.dev
+    version: "1.0.0"
+    processes:
+      - name: "composio"
+        cmdPattern: ".*composio.*"
+      - name: "python"
+        cmdPattern: ".*composio.*"
+    files:
+      - path: "**/.composio/**"
+        exists: true
+      - path: "**/composio/**"
+        exists: true
+      - path: "**/.composiorc"
+        exists: true
+    network:
+      domains:
+        - "api.composio.dev"
+        - "*.composio.dev"
+        - "backend.composio.dev"
+      ports:
+        - 443
+    riskLevel: medium
+    confidence: 80

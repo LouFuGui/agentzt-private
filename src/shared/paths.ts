@@ -19,3 +19,4 @@ export const POLICY_FILE = resolve(CONFIG_DIR, 'policy.json');
 export const GATEWAY_CONFIG_FILE = resolve(CONFIG_DIR, 'gateway.json');
 export const AGENTS_FILE = resolve(CONFIG_DIR, 'agents.json');
 export const GATEWAY_KEY_FILE = resolve(STATE_DIR, 'gateway-key.json');
+export const APPS_DB_FILE = resolve(STATE_DIR, 'apps.db');

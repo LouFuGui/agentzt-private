@@ -1,0 +1,259 @@
+# AUTONOMOUS Agent Signatures
+# Self-directed AI agents that operate independently
+
+signatures:
+  - id: autonomous-openclaw
+    name: OpenClaw
+    type: AUTONOMOUS
+    description: |
+      OpenClaw is an autonomous AI agent framework for automated task execution.
+      It can independently browse the web, execute code, and complete complex tasks.
+    vendor: https://github.com/openclaw
+    version: "1.0.0"
+    processes:
+      - name: "openclaw"
+        cmdPattern: ".*openclaw.*"
+      - name: "python"
+        cmdPattern: ".*openclaw.*|.*claw_agent.*"
+        envPatterns:
+          CLAW_API_KEY: ".*"
+    files:
+      - path: "**/.openclaw/*"
+        exists: true
+      - path: "**/openclaw.yaml"
+        exists: true
+      - path: "**/claw_config.json"
+        exists: true
+    network:
+      domains:
+        - "api.openclaw.ai"
+        - "*.openclaw.ai"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*openclaw\\.ai/v1/.*"
+    riskLevel: high
+    confidence: 85
+
+  - id: autonomous-autogpt
+    name: AutoGPT
+    type: AUTONOMOUS
+    description: |
+      AutoGPT is an autonomous GPT-4 agent that chains together LLM thoughts
+      to achieve goals without constant user input.
+    vendor: https://github.com/Significant-Gravitas/AutoGPT
+    version: "1.0.0"
+    processes:
+      - name: "autogpt"
+        cmdPattern: ".*autogpt.*"
+      - name: "python"
+        cmdPattern: ".*autogpt.*|.*Auto-GPT.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/autogpt/**"
+        exists: true
+      - path: "**/.autogpt*"
+        exists: true
+      - path: "**/auto_gpt_workspace/**"
+        exists: true
+      - path: "**/ai_settings.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*api\\.openai\\.com/v1/.*"
+    riskLevel: high
+    confidence: 90
+
+  - id: autonomous-devin
+    name: Devin
+    type: AUTONOMOUS
+    description: |
+      Devin is an AI software engineer developed by Cognition that can
+      autonomously plan, code, and debug complex software projects.
+    vendor: https://www.cognition.ai/devin
+    version: "1.0.0"
+    processes:
+      - name: "devin"
+        cmdPattern: ".*devin.*"
+      - name: "devin-agent"
+        cmdPattern: ".*devin.*"
+    files:
+      - path: "**/.devin/**"
+        exists: true
+      - path: "**/devin_workspace/**"
+        exists: true
+      - path: "**/devin_config.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.devin.ai"
+        - "*.cognition.ai"
+        - "*.devin.ai"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*devin\\.ai/api/.*"
+        - ".*cognition\\.ai/.*"
+    riskLevel: critical
+    confidence: 95
+
+  - id: autonomous-swe-agent
+    name: SWE-agent
+    type: AUTONOMOUS
+    description: |
+      SWE-agent is an autonomous software engineering agent from Princeton
+      that can solve GitHub issues by navigating and editing codebases.
+    vendor: https://github.com/princeton-nlp/SWE-agent
+    version: "1.0.0"
+    processes:
+      - name: "swe-agent"
+        cmdPattern: ".*swe-agent.*|.*sweagent.*"
+      - name: "python"
+        cmdPattern: ".*swe_agent.*|.*run.py.*--model.*"
+        envPatterns:
+          ANTHROPIC_API_KEY: ".*"
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/SWE-agent/**"
+        exists: true
+      - path: "**/swe_agent/**"
+        exists: true
+      - path: "**/.sweagent*"
+        exists: true
+      - path: "**/swe_agent_config.yaml"
+        exists: true
+    network:
+      domains:
+        - "api.anthropic.com"
+        - "api.openai.com"
+        - "github.com"
+      ports:
+        - 443
+      urlPatterns:
+        - ".*api\\.anthropic\\.com/v1/.*"
+        - ".*api\\.openai\\.com/v1/.*"
+        - ".*github\\.com/.*"
+    riskLevel: high
+    confidence: 85
+
+  - id: autonomous-gpt-engineer
+    name: GPT-Engineer
+    type: AUTONOMOUS
+    description: |
+      GPT-Engineer is an AI tool that generates entire codebases
+      based on natural language specifications.
+    vendor: https://github.com/gpt-engineer-org/gpt-engineer
+    version: "1.0.0"
+    processes:
+      - name: "gpt-engineer"
+        cmdPattern: ".*gpt-engineer.*|.*gpte.*"
+      - name: "python"
+        cmdPattern: ".*gpt_engineer.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/.gpt-engineer/**"
+        exists: true
+      - path: "**/gpt_engineer/**"
+        exists: true
+      - path: "**/prompt"
+        contentPattern: ".*"
+    network:
+      domains:
+        - "api.openai.com"
+      ports:
+        - 443
+    riskLevel: high
+    confidence: 80
+
+  - id: autonomous-babyagi
+    name: BabyAGI
+    type: AUTONOMOUS
+    description: |
+      BabyAGI is an autonomous AI agent that uses GPT-4 to create, prioritize,
+      and execute tasks to achieve a given objective.
+    vendor: https://github.com/yoheinakajima/babyagi
+    version: "1.0.0"
+    processes:
+      - name: "babyagi"
+        cmdPattern: ".*babyagi.*|.*baby_agi.*"
+      - name: "python"
+        cmdPattern: ".*babyagi.*"
+        envPatterns:
+          OPENAI_API_KEY: ".*"
+    files:
+      - path: "**/babyagi/**"
+        exists: true
+      - path: "**/.babyagi*"
+        exists: true
+    network:
+      domains:
+        - "api.openai.com"
+        - "api.pinecone.io"
+      ports:
+        - 443
+    riskLevel: high
+    confidence: 80
+
+  - id: autonomous-agentgpt
+    name: AgentGPT
+    type: AUTONOMOUS
+    description: |
+      AgentGPT is a web-based autonomous AI agent platform that allows
+      users to configure and deploy autonomous AI agents.
+    vendor: https://github.com/reworkd/AgentGPT
+    version: "1.0.0"
+    processes:
+      - name: "agentgpt"
+        cmdPattern: ".*agentgpt.*"
+      - name: "next"
+        cmdPattern: ".*AgentGPT.*"
+      - name: "node"
+        cmdPattern: ".*AgentGPT.*|.*agentgpt.*"
+    files:
+      - path: "**/AgentGPT/**"
+        exists: true
+      - path: "**/.env"
+        contentPattern: ".*OPENAI_API_KEY.*"
+    network:
+      domains:
+        - "api.openai.com"
+        - "agentgpt.reworkd.ai"
+      ports:
+        - 3000
+        - 443
+    riskLevel: high
+    confidence: 75
+
+  - id: autonomous-superagent
+    name: SuperAgent
+    type: AUTONOMOUS
+    description: |
+      SuperAgent is an open-source autonomous AI agent framework for
+      building and deploying AI agents with various capabilities.
+    vendor: https://github.com/homanp/superagent
+    version: "1.0.0"
+    processes:
+      - name: "superagent"
+        cmdPattern: ".*superagent.*"
+      - name: "python"
+        cmdPattern: ".*superagent.*"
+    files:
+      - path: "**/superagent/**"
+        exists: true
+      - path: "**/.superagent*"
+        exists: true
+    network:
+      domains:
+        - "api.superagent.ai"
+        - "*.superagent.ai"
+      ports:
+        - 443
+        - 8080
+    riskLevel: high
+    confidence: 75
