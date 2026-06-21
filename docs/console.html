@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentZT 控制台 - 零信任AI智能体平台</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --bg-dark: #0f172a;
+      --bg-card: #1e293b;
+      --bg-input: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #475569;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* 布局 */
+    .layout {
+      display: grid;
+      grid-template-columns: 260px 1fr 320px;
+      grid-template-rows: 64px 1fr;
+      height: 100vh;
+    }
+
+    /* 顶部导航 */
+    .header {
+      grid-column: 1 / -1;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--bg-input);
+      border-radius: 20px;
+      font-size: 13px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* 侧边栏 */
+    .sidebar {
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      margin-bottom: 24px;
+    }
+
+    .nav-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      padding: 0 8px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      font-size: 14px;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-input);
+    }
+
+    .nav-item.active {
+      background: var(--primary);
+    }
+
+    .nav-icon {
+      font-size: 18px;
+      width: 24px;
+      text-align: center;
+    }
+
+    /* 主内容区 */
+    .main {
+      padding: 24px;
+      overflow-y: auto;
+      background: var(--bg-dark);
+    }
+
+    .page-title {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+
+    /* 统计卡片 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .stat-change {
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .stat-change.positive { color: var(--success); }
+    .stat-change.negative { color: var(--danger); }
+
+    /* 实时流量 */
+    .traffic-panel {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .traffic-chart {
+      height: 200px;
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .chart-bar {
+      flex: 1;
+      background: var(--primary);
+      border-radius: 4px 4px 0 0;
+      transition: height 0.3s ease;
+      min-height: 4px;
+    }
+
+    /* Agent 列表 */
+    .agent-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .agent-card {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .agent-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+
+    .agent-info {
+      flex: 1;
+    }
+
+    .agent-name {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .agent-meta {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .agent-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .agent-status.active {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+
+    .agent-status.idle {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--warning);
+    }
+
+    /* 右侧面板 - 实时日志 */
+    .right-panel {
+      background: var(--bg-card);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-tab {
+      flex: 1;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .panel-tab.active {
+      border-bottom-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .log-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .log-entry {
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-family: 'Fira Code', monospace;
+      background: var(--bg-input);
+    }
+
+    .log-entry.allow {
+      border-left: 3px solid var(--success);
+    }
+
+    .log-entry.deny {
+      border-left: 3px solid var(--danger);
+    }
+
+    .log-entry.info {
+      border-left: 3px solid var(--primary);
+    }
+
+    .log-time {
+      color: var(--text-muted);
+      margin-right: 8px;
+    }
+
+    .log-agent {
+      color: #8b5cf6;
+      margin-right: 8px;
+    }
+
+    /* 聊天界面 */
+    .chat-container {
+      background: var(--bg-card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 120px);
+    }
+
+    .chat-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .message {
+      margin-bottom: 16px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .message-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--bg-input);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .message.user .message-avatar {
+      background: var(--primary);
+    }
+
+    .message-content {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: var(--bg-input);
+    }
+
+    .message.user .message-content {
+      background: var(--primary);
+    }
+
+    .chat-input-area {
+      padding: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 12px 16px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      resize: none;
+    }
+
+    .chat-input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* 策略编辑器 */
+    .policy-editor {
+      background: var(--bg-card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 20px;
+    }
+
+    .policy-json {
+      width: 100%;
+      min-height: 400px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      color: var(--text);
+      font-family: 'Fira Code', monospace;
+      font-size: 13px;
+      resize: vertical;
+    }
+
+    .policy-json:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    /* 审计日志表 */
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .audit-table th,
+    .audit-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .audit-table th {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .decision-badge {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .decision-badge.allow {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+
+    .decision-badge.deny {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--danger);
+    }
+
+    /* 响应式 */
+    @media (max-width: 1200px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar, .right-panel {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <!-- 顶部导航 -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">🛡️</div>
+        <span>AgentZT Console</span>
+      </div>
+      <div class="header-actions">
+        <div class="status-badge">
+          <div class="status-dot"></div>
+          <span>网关运行中</span>
+        </div>
+        <button class="btn btn-primary" onclick="refreshData()">🔄 刷新</button>
+      </div>
+    </header>
+
+    <!-- 侧边栏 -->
+    <nav class="sidebar">
+      <div class="nav-section">
+        <div class="nav-title">概览</div>
+        <div class="nav-item active" onclick="showPage('dashboard')">
+          <span class="nav-icon">📊</span>
+          <span>仪表盘</span>
+        </div>
+        <div class="nav-item" onclick="showPage('agents')">
+          <span class="nav-icon">🤖</span>
+          <span>智能体</span>
+        </div>
+        <div class="nav-item" onclick="showPage('chat')">
+          <span class="nav-icon">💬</span>
+          <span>智能对话</span>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">安全控制</div>
+        <div class="nav-item" onclick="showPage('policy')">
+          <span class="nav-icon">📋</span>
+          <span>策略配置</span>
+        </div>
+        <div class="nav-item" onclick="showPage('audit')">
+          <span class="nav-icon">📝</span>
+          <span>审计日志</span>
+        </div>
+        <div class="nav-item" onclick="showPage('guardrails')">
+          <span class="nav-icon">🛑</span>
+          <span>防护栏</span>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">集成</div>
+        <div class="nav-item" onclick="showPage('mcp')">
+          <span class="nav-icon">🔌</span>
+          <span>MCP 服务器</span>
+        </div>
+        <div class="nav-item" onclick="showPage('sandbox')">
+          <span class="nav-icon">📦</span>
+          <span>沙盒环境</span>
+        </div>
+        <div class="nav-item" onclick="showPage('llm')">
+          <span class="nav-icon">🧠</span>
+          <span>LLM 路由</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="main" id="main-content">
+      <!-- 仪表盘页面 -->
+      <div id="page-dashboard">
+        <h1 class="page-title">仪表盘</h1>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">活跃智能体</div>
+            <div class="stat-value" id="stat-agents">3</div>
+            <div class="stat-change positive">↑ 2 本月新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">今日请求</div>
+            <div class="stat-value" id="stat-requests">1,247</div>
+            <div class="stat-change positive">↑ 23% vs 昨天</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">拦截数</div>
+            <div class="stat-value" id="stat-blocked">47</div>
+            <div class="stat-change negative">↑ 3 被拒绝</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">平均延迟</div>
+            <div class="stat-value" id="stat-latency">142ms</div>
+            <div class="stat-change positive">↓ 12ms 优化</div>
+          </div>
+        </div>
+
+        <div class="traffic-panel">
+          <div class="panel-header">
+            <h3 class="panel-title">实时流量</h3>
+            <span style="color: var(--text-muted); font-size: 13px;">请求/分钟</span>
+          </div>
+          <div class="traffic-chart" id="traffic-chart">
+            <!-- 动态生成的柱状图 -->
+          </div>
+        </div>
+
+        <div class="traffic-panel">
+          <div class="panel-header">
+            <h3 class="panel-title">活跃智能体</h3>
+          </div>
+          <div class="agent-list" id="agent-list">
+            <!-- 动态生成的 Agent 列表 -->
+          </div>
+        </div>
+      </div>
+
+      <!-- 智能体页面 -->
+      <div id="page-agents" style="display: none;">
+        <h1 class="page-title">智能体管理</h1>
+        <div style="margin-bottom: 24px;">
+          <button class="btn btn-primary" onclick="showEnrollModal()">+ 注册新智能体</button>
+        </div>
+        <div class="agent-list" id="all-agents">
+          <!-- 全部 Agent 列表 -->
+        </div>
+      </div>
+
+      <!-- 聊天页面 -->
+      <div id="page-chat" style="display: none;">
+        <h1 class="page-title">智能对话</h1>
+        <div class="chat-container">
+          <div class="chat-header">
+            <strong>DeepSeek + AgentZT</strong>
+            <span style="color: var(--text-muted); margin-left: 12px; font-size: 13px;">
+              受 AgentZT 策略保护的智能助手
+            </span>
+          </div>
+          <div class="chat-messages" id="chat-messages">
+            <div class="message">
+              <div class="message-avatar">🤖</div>
+              <div class="message-content">
+                您好！我是 AgentZT 智能助手。我运行在零信任安全框架下，所有操作都经过策略检查和审计。
+                <br><br>
+                我可以帮您：<br>
+                • 🔍 搜索网络信息<br>
+                • 💻 执行代码（沙盒隔离）<br>
+                • 📁 读取文件<br>
+                • 🔌 调用 MCP 工具<br>
+                <br>
+                请告诉我您需要什么帮助？
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea class="chat-input" id="chat-input" rows="1" placeholder="输入您的请求..."></textarea>
+            <button class="btn btn-primary" onclick="sendMessage()">发送</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 策略配置页面 -->
+      <div id="page-policy" style="display: none;">
+        <h1 class="page-title">策略配置</h1>
+        <div class="policy-editor">
+          <div class="panel-header" style="margin-bottom: 16px;">
+            <h3 class="panel-title">RBAC 策略 (policy.json)</h3>
+            <button class="btn btn-primary" onclick="savePolicy()">💾 保存</button>
+          </div>
+          <textarea class="policy-json" id="policy-editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <!-- 审计日志页面 -->
+      <div id="page-audit" style="display: none;">
+        <h1 class="page-title">审计日志</h1>
+        <div class="traffic-panel">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>智能体</th>
+                <th>操作</th>
+                <th>资源</th>
+                <th>决策</th>
+                <th>原因</th>
+              </tr>
+            </thead>
+            <tbody id="audit-tbody">
+              <!-- 动态生成 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MCP 页面 -->
+      <div id="page-mcp" style="display: none;">
+        <h1 class="page-title">MCP 服务器</h1>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">已连接服务器</div>
+            <div class="stat-value">3</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">可用工具</div>
+            <div class="stat-value">12</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">已映射资源</div>
+            <div class="stat-value">8</div>
+          </div>
+        </div>
+        <div class="traffic-panel">
+          <div class="panel-header">
+            <h3 class="panel-title">MCP 服务器列表</h3>
+            <button class="btn btn-primary">+ 添加服务器</button>
+          </div>
+          <div class="agent-list">
+            <div class="agent-card">
+              <div class="agent-avatar">📁</div>
+              <div class="agent-info">
+                <div class="agent-name">filesystem</div>
+                <div class="agent-meta">本地文件系统 /tmp/agentzt-files • 5 工具</div>
+              </div>
+              <span class="agent-status active">已连接</span>
+            </div>
+            <div class="agent-card">
+              <div class="agent-avatar">📊</div>
+              <div class="agent-info">
+                <div class="agent-name">git</div>
+                <div class="agent-meta">Git 操作 • 3 工具</div>
+              </div>
+              <span class="agent-status active">已连接</span>
+            </div>
+            <div class="agent-card">
+              <div class="agent-avatar">💬</div>
+              <div class="agent-info">
+                <div class="agent-name">slack</div>
+                <div class="agent-meta">远程 MCP 服务器 • 4 工具</div>
+              </div>
+              <span class="agent-status idle">离线</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 沙盒页面 -->
+      <div id="page-sandbox" style="display: none;">
+        <h1 class="page-title">沙盒环境</h1>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Web 沙盒</div>
+            <div class="stat-value">🕷️</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Puppeteer + Chromium</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">代码执行</div>
+            <div class="stat-value">💻</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Docker + Isolate</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">文件系统</div>
+            <div class="stat-value">📁</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Seccomp-bpf 隔离</div>
+          </div>
+        </div>
+        <div class="traffic-panel">
+          <div class="panel-header">
+            <h3 class="panel-title">沙盒执行记录</h3>
+          </div>
+          <div id="sandbox-logs" style="font-family: monospace; font-size: 13px;">
+            <!-- 动态生成 -->
+          </div>
+        </div>
+      </div>
+
+      <!-- LLM 路由页面 -->
+      <div id="page-llm" style="display: none;">
+        <h1 class="page-title">LLM 路由配置</h1>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">DeepSeek</div>
+            <div class="stat-value" style="font-size: 20px;">deepseek-chat</div>
+            <div class="stat-change positive">✓ 已配置</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Anthropic</div>
+            <div class="stat-value" style="font-size: 20px;">claude-sonnet-4-6</div>
+            <div class="stat-change positive">✓ 已配置</div>
+          </div>
+        </div>
+        <div class="policy-editor">
+          <div class="panel-header" style="margin-bottom: 16px;">
+            <h3 class="panel-title">模型路由规则</h3>
+          </div>
+          <textarea class="policy-json" id="llm-routes" spellcheck="false">{
+  "routes": [
+    { "pattern": "deepseek-*", "provider": "deepseek", "priority": 1 },
+    { "pattern": "claude-*", "provider": "anthropic", "priority": 1 },
+    { "pattern": "*", "provider": "deepseek", "priority": 99 }
+  ],
+  "fallback": "deepseek"
+}</textarea>
+        </div>
+      </div>
+    </main>
+
+    <!-- 右侧日志面板 -->
+    <aside class="right-panel">
+      <div class="panel-tabs">
+        <div class="panel-tab active" onclick="switchLogTab('live')">实时日志</div>
+        <div class="panel-tab" onclick="switchLogTab('alerts')">告警</div>
+      </div>
+      <div class="log-container" id="log-container">
+        <!-- 动态生成的日志 -->
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // ==================== 页面路由 ====================
+    let currentPage = 'dashboard';
+
+    function showPage(page) {
+      document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
+      document.getElementById(`page-${page}`).style.display = 'block';
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      event.target.closest('.nav-item').classList.add('active');
+      currentPage = page;
+
+      if (page === 'policy') loadPolicy();
+      if (page === 'audit') loadAudit();
+    }
+
+    // ==================== 仪表盘数据 ====================
+    const dashboardData = {
+      agents: [
+        { id: 'agent-001', name: 'Research Bot', role: 'research-agent', status: 'active', lastSeen: '2秒前' },
+        { id: 'agent-002', name: 'Ops Assistant', role: 'ops-agent', status: 'idle', lastSeen: '5分钟前' },
+        { id: 'agent-003', name: 'Comms Drafter', role: 'comms-agent', status: 'active', lastSeen: '刚刚' },
+      ],
+      requests: Array.from({ length: 20 }, () => Math.floor(Math.random() * 100) + 20)
+    };
+
+    function renderDashboard() {
+      // 渲染流量图
+      const chart = document.getElementById('traffic-chart');
+      chart.innerHTML = dashboardData.requests.map(r => {
+        const height = (r / 120) * 100;
+        return `<div class="chart-bar" style="height: ${height}%"></div>`;
+      }).join('');
+
+      // 渲染 Agent 列表
+      const list = document.getElementById('agent-list');
+      list.innerHTML = dashboardData.agents.map(agent => `
+        <div class="agent-card">
+          <div class="agent-avatar">🤖</div>
+          <div class="agent-info">
+            <div class="agent-name">${agent.name}</div>
+            <div class="agent-meta">${agent.role} • ${agent.lastSeen}</div>
+          </div>
+          <span class="agent-status ${agent.status}">${agent.status === 'active' ? '活跃' : '空闲'}</span>
+        </div>
+      `).join('');
+    }
+
+    // ==================== 实时日志 ====================
+    const logs = [];
+    const maxLogs = 50;
+
+    function addLog(entry) {
+      logs.unshift({
+        time: new Date().toLocaleTimeString(),
+        ...entry
+      });
+      if (logs.length > maxLogs) logs.pop();
+      renderLogs();
+    }
+
+    function renderLogs() {
+      const container = document.getElementById('log-container');
+      container.innerHTML = logs.map(log => `
+        <div class="log-entry ${log.type}">
+          <span class="log-time">${log.time}</span>
+          <span class="log-agent">[${log.agent}]</span>
+          <span>${log.message}</span>
+        </div>
+      `).join('');
+    }
+
+    // 模拟实时日志
+    function simulateLogs() {
+      const agents = ['research-bot', 'ops-assistant', 'comms-agent'];
+      const actions = [
+        { type: 'allow', message: 'model.call: claude-sonnet-4-6 ✓' },
+        { type: 'allow', message: 'tool.call: kb.search ✓' },
+        { type: 'deny', message: 'tool.call: email.send - not in scope' },
+        { type: 'info', message: 'token.issue: 5min TTL' },
+        { type: 'allow', message: 'guardrail.input: pass (no_risk)' },
+      ];
+
+      setInterval(() => {
+        const agent = agents[Math.floor(Math.random() * agents.length)];
+        const action = actions[Math.floor(Math.random() * actions.length)];
+        addLog({ agent, ...action });
+      }, 2000);
+    }
+
+    // ==================== 聊天功能 ====================
+    let chatHistory = [];
+
+    async function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const message = input.value.trim();
+      if (!message) return;
+
+      // 添加用户消息
+      addChatMessage('user', message);
+      input.value = '';
+
+      // 添加加载状态
+      const loadingMsg = addChatMessage('assistant', '思考中...', true);
+
+      try {
+        // 调用 AgentZT 网关 (实际应该调用 /v1/messages)
+        // 这里简化处理，实际应该使用 fetch 调用后端 API
+        const response = await mockAgentResponse(message);
+
+        // 移除加载状态
+        loadingMsg.remove();
+
+        // 添加助手响应
+        addChatMessage('assistant', response);
+      } catch (error) {
+        loadingMsg.remove();
+        addChatMessage('assistant', `错误: ${error.message}`);
+      }
+    }
+
+    function addChatMessage(role, content, isLoading = false) {
+      const container = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = `message ${role}`;
+
+      if (isLoading) {
+        div.innerHTML = `
+          <div class="message-avatar">🤖</div>
+          <div class="message-content">${content}</div>
+        `;
+      } else {
+        div.innerHTML = `
+          <div class="message-avatar">${role === 'user' ? '👤' : '🤖'}</div>
+          <div class="message-content">${content.replace(/\n/g, '<br>')}</div>
+        `;
+      }
+
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+      return div;
+    }
+
+    async function mockAgentResponse(message) {
+      // 模拟 AgentZT 智能体响应
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      if (message.includes('你好') || message.includes('hello')) {
+        return '您好！我是 AgentZT 智能助手，运行在零信任安全框架下。请问有什么可以帮助您的？';
+      }
+
+      if (message.includes('搜索')) {
+        return '🔍 正在为您执行搜索（经过沙盒隔离执行）...<br><br>搜索结果将通过 AgentZT 安全策略审核后返回。';
+      }
+
+      if (message.includes('代码') || message.includes('执行')) {
+        return '💻 我可以在沙盒环境中安全执行代码。<br>请提供您要执行的代码（语言：Python/JavaScript/Bash）。';
+      }
+
+      return `我收到了您的请求: "${message}"<br><br>作为 AgentZT 智能助手，所有操作都会经过:<br>
+      1. ✅ 身份验证 (Ed25519 密钥)<br>
+      2. ✅ RBAC 策略检查<br>
+      3. ✅ 上下文感知授权<br>
+      4. ✅ 输入/输出防护栏<br>
+      5. ✅ 完整审计日志<br><br>
+      请告诉我您具体需要什么帮助？`;
+    }
+
+    // 回车发送
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+    });
+
+    // ==================== 策略编辑器 ====================
+    const defaultPolicy = {
+      version: 1,
+      defaultDeny: true,
+      roles: {
+        "research-agent": {
+          models: ["claude-haiku-4-5", "claude-sonnet-4-6", "deepseek-chat"],
+          tools: ["kb.search", "web.fetch", "mcp:git:status"],
+          limits: { maxOutputTokens: 2048, requestsPerMinute: 60 }
+        },
+        "ops-agent": {
+          models: ["claude-haiku-4-5"],
+          tools: ["kb.search", "db.query"],
+          abac: { allowedHoursUTC: { start: 8, end: 20 } }
+        }
+      }
+    };
+
+    async function loadPolicy() {
+      document.getElementById('policy-editor').value = JSON.stringify(defaultPolicy, null, 2);
+    }
+
+    async function savePolicy() {
+      const policy = document.getElementById('policy-editor').value;
+      try {
+        JSON.parse(policy);
+        // 实际应该调用 API 保存
+        alert('策略已保存 ✓');
+      } catch (e) {
+        alert('策略 JSON 格式错误: ' + e.message);
+      }
+    }
+
+    // ==================== 审计日志 ====================
+    async function loadAudit() {
+      const tbody = document.getElementById('audit-tbody');
+      tbody.innerHTML = `
+        <tr>
+          <td>14:32:01</td>
+          <td>research-bot</td>
+          <td>model.call</td>
+          <td>claude-sonnet-4-6</td>
+          <td><span class="decision-badge allow">ALLOW</span></td>
+          <td>role permits model</td>
+        </tr>
+        <tr>
+          <td>14:31:58</td>
+          <td>ops-assistant</td>
+          <td>tool.call</td>
+          <td>email.send</td>
+          <td><span class="decision-badge deny">DENY</span></td>
+          <td>not in scope, no JIT</td>
+        </tr>
+        <tr>
+          <td>14:31:55</td>
+          <td>comms-agent</td>
+          <td>elevation.grant</td>
+          <td>tool:email.send</td>
+          <td><span class="decision-badge allow">ALLOW</span></td>
+          <td>JIT 120s TTL</td>
+        </tr>
+        <tr>
+          <td>14:31:50</td>
+          <td>research-bot</td>
+          <td>guardrail.block</td>
+          <td>claude-sonnet-4-6</td>
+          <td><span class="decision-badge deny">DENY</span></td>
+          <td>prompt injection detected</td>
+        </tr>
+      `;
+    }
+
+    // ==================== 初始化 ====================
+    function refreshData() {
+      dashboardData.requests = Array.from({ length: 20 }, () => Math.floor(Math.random() * 100) + 20);
+      renderDashboard();
+    }
+
+    function switchLogTab(tab) {
+      document.querySelectorAll('.panel-tab').forEach((t, i) => {
+        t.classList.toggle('active', (tab === 'live' && i === 0) || (tab === 'alerts' && i === 1));
+      });
+    }
+
+    function showEnrollModal() {
+      alert('注册智能体功能 - 将调用 npm run enroll');
+    }
+
+    // 启动
+    document.addEventListener('DOMContentLoaded', () => {
+      renderDashboard();
+      simulateLogs();
+    });
+  </script>
+</body>
+</html>
