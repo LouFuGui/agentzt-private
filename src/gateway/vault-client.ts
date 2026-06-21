@@ -164,9 +164,15 @@ export class VaultClient {
       this.leaseIds.add(secret.leaseId);
     }
 
+    const username = secret.data['username'];
+    const password = secret.data['password'];
+    if (username == null || password == null) {
+      throw new Error(`Database credentials not found in Vault secret for role "${roleName}"`);
+    }
+
     return {
-      username: String(secret.data['username']),
-      password: String(secret.data['password']),
+      username: String(username),
+      password: String(password),
       leaseId: secret.leaseId,
       leaseDuration: secret.leaseDuration,
     };
