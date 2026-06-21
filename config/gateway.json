@@ -15,8 +15,8 @@
     "auth": {
       "_comment": "method: token (dev), approle (prod), kubernetes (cloud-native)",
       "method": "token",
-      "token": "${VAULT_TOKEN}"
-    },
+      "token": ""
+    }
     "autoRenew": {
       "enabled": true,
       "intervalMs": 3600000
