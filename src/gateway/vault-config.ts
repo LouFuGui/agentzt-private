@@ -38,11 +38,8 @@ export interface VaultSecretPaths {
   gatewaySigningKey: string; // default: secret/data/agentzt/gateway-signing-key
   
   // Tool-specific credentials (tool name as suffix)
-  toolsPrefix: string;      // default: secret/data/agentzt/tools
-  
   // Database dynamic credentials
-  databasePrefix: string;   // default: database/static-creds
-}
+  databasePrefix: string;   // default: database/creds
 
 /**
  * Vault server configuration.
