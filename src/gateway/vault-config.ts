@@ -48,7 +48,6 @@ export interface VaultSecretPaths {
  * Vault server configuration.
  */
 export interface VaultServerConfig {
-  enabled: boolean;
   address: string;          // e.g., 'http://localhost:8200' or 'https://vault.company.com:8200'
   namespace?: string;       // Enterprise edition feature
   tls?: {
@@ -63,6 +62,7 @@ export interface VaultServerConfig {
  * Complete Vault integration configuration.
  */
 export interface VaultConfig {
+  enabled: boolean;
   server: VaultServerConfig;
   auth: VaultAuth;
   secrets?: VaultSecretPaths;
