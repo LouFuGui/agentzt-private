@@ -91,9 +91,8 @@ Edit `config/gateway.json`:
     },
     "auth": {
       "method": "token",
-      "token": "${VAULT_TOKEN}"
+      "token": "myroot"
     }
-  }
 }
 ```
 
