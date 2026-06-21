@@ -3,14 +3,39 @@
   "issuer": "agentzt-gateway",
   "tokenTtlSeconds": 300,
   "assertionMaxAgeSeconds": 60,
+  "vault": {
+    "_comment": "Vault integration for secure secrets management. Set enabled=true to use Vault for API keys and tool credentials. Supports token, AppRole, and Kubernetes auth methods.",
+    "enabled": false,
+    "server": {
+      "address": "http://localhost:8200",
+      "tls": {
+        "skip_verify": false
+      }
+    },
+    "auth": {
+      "_comment": "method: token (dev), approle (prod), kubernetes (cloud-native)",
+      "method": "token",
+      "token": ""
+    }
+    "autoRenew": {
+      "enabled": true,
+      "intervalMs": 3600000
+    },
+    "cache": {
+      "enabled": true,
+      "ttlMs": 300000
+    },
+    "failOpen": false,
+    "timeoutMs": 5000
+  },
   "upstream": {
-    "_comment": "mode=mock returns a synthetic Anthropic-shaped response so the demo runs fully offline. mode=passthrough forwards to a real Model API using the enterprise key from the env var below — the agent NEVER sees that key (credential isolation).",
+    "_comment": "mode=mock returns a synthetic Anthropic-shaped response so the demo runs fully offline. mode=passthrough forwards to a real Model API using the enterprise key from Vault or env var below.",
     "mode": "mock",
     "anthropicBaseUrl": "https://api.anthropic.com",
     "apiKeyEnv": "AGENTZT_UPSTREAM_ANTHROPIC_KEY"
   },
   "guardrails": {
-    "_comment": "provider=auto uses OpenGuardrails (context-aware detection incl. indirect prompt injection) when OPENGUARDRAILS_API_KEY is set, else the local regex detector so the demo runs offline. input.mode block=reject risky prompts, flag=allow but audit, off=disabled. output.redactSecrets scrubs credential-shaped strings from responses; output.check runs a context-aware output review when the provider supports it.",
+    "_comment": "provider=auto uses OpenGuardrails (context-aware detection incl. indirect prompt injection) when OPENGUARDRAILS_API_KEY is set, else the local regex detector so the demo runs offline.",
     "provider": "auto",
     "input": { "mode": "block" },
     "output": { "redactSecrets": true, "check": true },
@@ -23,7 +48,7 @@
     }
   },
   "tls": {
-    "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1). channelBinding requires the client cert CN to equal the token subject.",
+    "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1).",
     "enabled": false,
     "keyFile": ".agentzt/tls/server.key",
     "certFile": ".agentzt/tls/server.crt",
