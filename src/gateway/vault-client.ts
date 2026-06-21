@@ -145,8 +145,8 @@ export class VaultClient {
     if (typeof key === 'string') {
       try {
         return JSON.parse(key) as JsonWebKey;
-      } catch {
-        return key as JsonWebKey;
+      } catch (err) {
+        throw new Error(`Gateway signing key in Vault must be valid JWK JSON: ${(err as Error).message}`);
       }
     }
     return key as JsonWebKey;
