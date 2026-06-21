@@ -180,6 +180,25 @@ export class VaultClient {
     if (this.config.cache?.enabled) {
       const cached = this.secretCache.get(path);
       if (cached && cached.expiry > Date.now()) {
+        return cached.secret;
+      }
+      this.secretCache.delete(path);
+    }
+
+    // Fetch from Vault
+    const resp = await this.request('GET', `/v1/${path}`);
+    const secret: VaultSecret = {
+      leaseId: resp.lease_id || '',
+      leaseDuration: resp.lease_duration || 0,
+      renewable: resp.renewable ?? false,
+      data: resp.data?.data || resp.data,
+    };
+
+    // Cache the secret (including lease metadata)
+    if (this.config.cache?.enabled) {
+      const ttl = this.config.cache.ttlMs ?? 300000;
+      this.secretCache.set(path, { secret, expiry: Date.now() + ttl });
+    }
         return { leaseId: '', leaseDuration: 0, renewable: false, data: cached.data };
       }
       this.secretCache.delete(path);
