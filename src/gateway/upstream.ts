@@ -1,5 +1,6 @@
 import type { GatewayConfig } from '../shared/types.ts';
 import { newId } from '../shared/crypto.ts';
+import { getModelApiKeyFromVault } from './vault-secrets.ts';
 
 export type ModelRequest = {
   model: string;
@@ -79,7 +80,7 @@ async function passthroughModel(
   cfg: GatewayConfig,
   req: ModelRequest,
 ): Promise<ModelResponse> {
-  const apiKey = process.env[cfg.upstream.apiKeyEnv];
+  const apiKey = await getModelApiKeyFromVault(cfg.vault, cfg.upstream.apiKeyEnv);
   if (!apiKey) {
     return {
       status: 502,
@@ -87,7 +88,9 @@ async function passthroughModel(
         type: 'error',
         error: {
           type: 'upstream_misconfigured',
-          message: `passthrough mode requires the enterprise key in env ${cfg.upstream.apiKeyEnv}`,
+          message: cfg.vault?.enabled
+            ? 'passthrough mode requires the enterprise key in Vault or the configured fallback env var'
+            : `passthrough mode requires the enterprise key in env ${cfg.upstream.apiKeyEnv}`,
         },
       },
     };

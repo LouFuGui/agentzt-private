@@ -3,6 +3,9 @@ import { dirname } from 'node:path';
 import type { KeyObject } from 'node:crypto';
 import { GATEWAY_KEY_FILE } from '../shared/paths.ts';
 import {
+  createPublicKey,
+} from 'node:crypto';
+import {
   generateEd25519,
   privateKeyFromJwk,
   publicKeyFromJwk,
@@ -29,6 +32,16 @@ export function loadOrCreateGatewayKey(): GatewaySigningKey {
     pair = generateEd25519();
     mkdirSync(dirname(GATEWAY_KEY_FILE), { recursive: true });
     writeFileSync(GATEWAY_KEY_FILE, JSON.stringify(pair, null, 2));
+  }
+
+  export function loadGatewayKeyFromPrivateJwk(privateKeyJwk: JsonWebKey): GatewaySigningKey {
+    const privateKey = privateKeyFromJwk(privateKeyJwk);
+    const publicKey = createPublicKey(privateKey);
+    return {
+      privateKey,
+      publicKey,
+      publicKeyJwk: publicKey.export({ format: 'jwk' }) as JsonWebKey,
+    };
   }
   return {
     privateKey: privateKeyFromJwk(pair.privateKeyJwk),

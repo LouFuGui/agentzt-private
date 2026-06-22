@@ -1,139 +1,110 @@
-/**
- * Vault secrets manager that integrates with agentzt gateway.
- * Provides a unified interface for all secret retrieval needs.
- */
-
 import type { VaultConfig } from './vault-config.ts';
 import { VaultClient } from './vault-client.ts';
 import { makeLogger } from '../shared/log.ts';
 
 const log = makeLogger('vault-secrets');
 
-/**
- * Global Vault client instance (singleton).
- */
 let globalVaultClient: VaultClient | null = null;
+let initPromise: Promise<VaultClient | null> | null = null;
 
-/**
- * Initialize the global Vault client.
- */
-export async function initializeVault(config: VaultConfig): Promise<void> {
-  try {
-    globalVaultClient = new VaultClient(config);
-    await globalVaultClient.init();
-    log.info('✓ Vault secrets manager initialized');
-  } catch (err) {
-    log.error(`Failed to initialize Vault: ${(err as Error).message}`);
-    if (!config.failOpen) {
-      throw err;
+export async function initializeVault(config: VaultConfig | null | undefined): Promise<VaultClient | null> {
+  if (!config?.enabled) return null;
+  if (globalVaultClient) return globalVaultClient;
+  if (initPromise) return await initPromise;
+
+  initPromise = (async () => {
+    try {
+      const client = new VaultClient(config);
+      await client.init();
+      globalVaultClient = client;
+      log.info('Vault secrets manager initialized');
+      return client;
+    } catch (err) {
+      initPromise = null;
+      log.error(`Failed to initialize Vault: ${(err as Error).message}`);
+      if (!config.failOpen) throw err;
+      return null;
     }
-  }
+  })();
+
+  return await initPromise;
 }
 
-/**
- * Get the global Vault client instance.
- */
 export function getVaultClient(): VaultClient | null {
   return globalVaultClient;
 }
 
-/**
- * Retrieve the Model API key from Vault.
- * Falls back to environment variable if Vault is not available.
- */
 export async function getModelApiKeyFromVault(
-  vaultEnabled: boolean,
+  config: VaultConfig | null | undefined,
   fallbackEnvVar?: string,
 ): Promise<string | null> {
-  if (vaultEnabled && globalVaultClient) {
+  const client = await initializeVault(config);
+  if (client) {
     try {
-      return await globalVaultClient.getModelApiKey();
+      return await client.getModelApiKey();
     } catch (err) {
       log.error(`Failed to get model API key from Vault: ${(err as Error).message}`);
-      // Fall through to env var fallback
+      if (!config?.failOpen) throw err;
     }
   }
 
-  // Fallback to environment variable
-  if (fallbackEnvVar) {
-    return process.env[fallbackEnvVar] || null;
-  }
-
-  return null;
+  return fallbackEnvVar ? process.env[fallbackEnvVar] ?? null : null;
 }
 
-/**
- * Retrieve tool credentials from Vault.
- * Falls back to empty object if Vault is not available.
- */
-export async function getToolCredentialsFromVault(toolName: string): Promise<Record<string, string>> {
-  if (!globalVaultClient) {
-    log.debug(`Vault client not available, no credentials for tool: ${toolName}`);
-    return {};
-  }
+export async function getToolCredentialsFromVault(
+  config: VaultConfig | null | undefined,
+  toolName: string,
+): Promise<Record<string, string>> {
+  const client = await initializeVault(config);
+  if (!client) return {};
 
   try {
-    const creds = await globalVaultClient.getToolCredentials(toolName);
-    // Convert all values to strings
+    const creds = await client.getToolCredentials(toolName);
     const stringCreds: Record<string, string> = {};
     for (const [key, value] of Object.entries(creds)) {
-      stringCreds[key] = String(value);
+      stringCreds[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
     }
     return stringCreds;
   } catch (err) {
     log.warn(`Failed to get credentials for tool ${toolName}: ${(err as Error).message}`);
+    if (!config?.failOpen) throw err;
     return {};
   }
 }
 
-/**
- * Retrieve the gateway signing key from Vault.
- * Falls back to local file if Vault is not available.
- */
 export async function getGatewaySigningKeyFromVault(
-  vaultEnabled: boolean,
+  config: VaultConfig | null | undefined,
 ): Promise<JsonWebKey | null> {
-  if (vaultEnabled && globalVaultClient) {
-    try {
-      return await globalVaultClient.getGatewaySigningKey();
-    } catch (err) {
-      log.error(`Failed to get gateway signing key from Vault: ${(err as Error).message}`);
-      // Fall through to local file fallback
-    }
-  }
+  const client = await initializeVault(config);
+  if (!client) return null;
 
-  return null;
+  try {
+    return await client.getGatewaySigningKey();
+  } catch (err) {
+    log.error(`Failed to get gateway signing key from Vault: ${(err as Error).message}`);
+    if (!config?.failOpen) throw err;
+    return null;
+  }
 }
 
-/**
- * Retrieve database credentials from Vault.
- * Vault automatically rotates these credentials.
- */
-export async function getDatabaseCredentialsFromVault(roleName: string) {
-  if (!globalVaultClient) {
-    throw new Error('Vault client not available');
-  }
-
-  return await globalVaultClient.getDatabaseCredentials(roleName);
+export async function getDatabaseCredentialsFromVault(
+  config: VaultConfig | null | undefined,
+  roleName: string,
+) {
+  const client = await initializeVault(config);
+  if (!client) throw new Error('Vault client not available');
+  return await client.getDatabaseCredentials(roleName);
 }
 
-/**
- * Shutdown the Vault client (cleanup).
- */
 export async function shutdownVault(): Promise<void> {
   if (globalVaultClient) {
     await globalVaultClient.shutdown();
     globalVaultClient = null;
-    log.info('✓ Vault client shutdown');
   }
+  initPromise = null;
 }
 
-/**
- * Health check: is Vault available?
- */
 export async function checkVaultHealth(): Promise<boolean> {
-  if (!globalVaultClient) {
-    return false;
-  }
+  if (!globalVaultClient) return false;
   return await globalVaultClient.healthCheck();
 }
