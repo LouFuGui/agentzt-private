@@ -1,4 +1,4 @@
-import { newId } from '../shared/crypto.ts';
+import { randomUUID } from 'node:crypto';
 import type { TemporalConfig } from '../shared/types.ts';
 
 export type TemporalApiResult = {
@@ -69,7 +69,7 @@ export class TemporalClient {
 
   async startWorkflow(args: TemporalStartWorkflowArgs): Promise<TemporalApiResult> {
     const body: Record<string, unknown> = {
-      workflow_id: args.workflowId ?? newId('workflow'),
+      workflow_id: args.workflowId ?? `workflow_${randomUUID()}`,
       workflow_type: { name: args.workflowType },
       task_queue: { name: args.taskQueue ?? this.config.defaultTaskQueue },
     };
