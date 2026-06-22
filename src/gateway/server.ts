@@ -48,7 +48,7 @@ import { OpaClient, resolveOpaConfig } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
-import { resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
+import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
 import type { AuditEvent } from '../shared/types.ts';
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
@@ -125,9 +125,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   }
 
   function recordAudit(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent {
-    const event = audit.record(partial);
-    telemetry?.recordAudit(event);
-    return event;
+    return recordAuditWithTelemetry(audit, telemetry, partial);
   }
 
   // Verify bearer token; on failure write the response and return null.

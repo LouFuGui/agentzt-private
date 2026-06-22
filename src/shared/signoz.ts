@@ -132,6 +132,16 @@ export class SigNozTelemetry {
   }
 }
 
+export function recordAuditWithTelemetry(
+  audit: { record(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent },
+  telemetry: { recordAudit(event: AuditEvent): void } | null,
+  partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>,
+): AuditEvent {
+  const event = audit.record(partial);
+  telemetry?.recordAudit(event);
+  return event;
+}
+
 export function buildTracePayload(serviceName: string, events: AuditEvent[]): unknown {
   return {
     resourceSpans: [{
@@ -160,8 +170,8 @@ function toSpan(event: AuditEvent): unknown {
   const end = unixNano(event.ts);
   const latencyNs = BigInt(Math.max(event.latencyMs ?? 0, 0)) * 1_000_000n;
   return {
-    traceId: hex(event.requestId, 32),
-    spanId: hex(`${event.seq ?? 0}:${event.action}:${event.resource}`, 16),
+    traceId: truncatedHash(event.requestId, 32),
+    spanId: truncatedHash(`${event.seq ?? 0}:${event.action}:${event.resource}`, 16),
     name: `${event.action} ${event.resource}`,
     kind: 2,
     startTimeUnixNano: (end - latencyNs).toString(),
@@ -226,7 +236,7 @@ function unixNano(ts: string): bigint {
   return BigInt(new Date(ts).getTime()) * 1_000_000n;
 }
 
-function hex(input: string, length: number): string {
+function truncatedHash(input: string, length: number): string {
   return createHash('sha256').update(input).digest('hex').slice(0, length);
 }
 
