@@ -91,6 +91,13 @@ The demo exercises seven distinct controls:
 - **`config/agents.json`** — the gateway's identity registry (public keys only). Populated
   by `npm run enroll`.
 
+Optional **Open Policy Agent (OPA)** enforcement is configured under `opa` in
+`config/gateway.json` (or enabled with `AGENTZT_OPA=1`). When enabled, the gateway posts
+the call context to OPA's `/v1/data/{policyPath}` endpoint after local RBAC/JIT, guardrails,
+and ABAC pass; OPA can only add an extra deny. The default policy path is
+`agentzt/authz/decision`, returning either a boolean `result` or
+`{ "allow": boolean, "reason": string }`.
+
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
 

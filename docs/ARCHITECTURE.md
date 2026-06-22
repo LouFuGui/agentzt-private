@@ -120,8 +120,10 @@ Each model/tool call is authorized in layers — any layer can deny:
 3. **Rate limit** — per-agent sliding window (resource-exhaustion containment).
 4. **Input guardrail** — context-aware prompt-injection / safety check (block | flag | off).
 5. **ABAC** — operating hours + risk-adaptive (risk level from the input guardrail).
-6. **Execution** — forward to upstream model / run the tool.
-7. **Output guardrail** — context-aware output review + secret redaction before the response
+6. **OPA policy** — optional sidecar PDP check; it receives the request context and can only
+   add an extra deny after local least-privilege controls pass.
+7. **Execution** — forward to upstream model / run the tool.
+8. **Output guardrail** — context-aware output review + secret redaction before the response
    reaches the agent.
 
 ## Trust boundaries

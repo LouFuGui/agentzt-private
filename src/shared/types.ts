@@ -110,6 +110,15 @@ export type GatewayTlsConfig = {
   channelBinding: boolean;
 };
 
+export type OpaConfig = {
+  enabled: boolean;
+  baseUrl: string;
+  policyPath: string;
+  timeoutMs: number;
+  // On OPA error/timeout: false = fail closed, true = keep the local policy decision.
+  failOpen: boolean;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -121,6 +130,7 @@ export type GatewayConfig = {
     apiKeyEnv: string;
   };
   guardrails?: GuardrailConfig;
+  opa?: OpaConfig;
   tls?: GatewayTlsConfig;
   sandbox?: {
     enabled: boolean;
