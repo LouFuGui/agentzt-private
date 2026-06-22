@@ -17,8 +17,12 @@ server.listen(port, () => {
 function shutdown(sig: string) {
   log.info(`received ${sig}, shutting down`);
   server.close(() => {
-    void telemetry?.flush().finally(() => {
-      telemetry?.close();
+    if (!telemetry) {
+      process.exit(0);
+      return;
+    }
+    void telemetry.flush().finally(() => {
+      telemetry.close();
       process.exit(0);
     });
   });
