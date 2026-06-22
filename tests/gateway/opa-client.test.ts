@@ -33,7 +33,7 @@ const input = {
 };
 
 describe('OPA client', () => {
-  it('posts input to the configured data policy path and allows object decisions', async () => {
+  it('posts input to the configured data policy path and allows object decisions with reason', async () => {
     const opa = await withOpa(() => ({ allow: true, reason: 'rego allow' }));
     try {
       const client = new OpaClient({

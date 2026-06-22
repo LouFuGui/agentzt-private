@@ -94,13 +94,13 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
   const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
   const guard = createGuardrailProvider(guardrails);
-  const opa = createOpaClient(cfg.opa);
+  const opaClient = createOpaClient(cfg.opa);
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
-  if (opa) log.info(`OPA policy: ON (${opa.url}, failOpen=${opa.config.failOpen})`);
+  if (opaClient) log.info(`OPA policy: ON (${opaClient.url}, failOpen=${opaClient.config.failOpen})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
@@ -490,7 +490,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     authVia: 'scope' | 'jit',
     riskLevel?: RiskLevel,
   ): Promise<{ allow: true; reason: string; input?: OpaDecisionInput } | { allow: false; reason: string; input?: OpaDecisionInput }> {
-    if (!opa) return { allow: true, reason: 'OPA disabled' };
+    if (!opaClient) return { allow: true, reason: 'OPA disabled' };
     const input: OpaDecisionInput = {
       agentId: claims.sub,
       role: claims.role,
@@ -500,7 +500,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       riskLevel,
       now: new Date().toISOString(),
     };
-    const decision = await opa.decide(input);
+    const decision = await opaClient.decide(input);
     return { ...decision, input };
   }
 
@@ -620,7 +620,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
         inputVerdict,
         outputVerdict,
         outputRedactions: outRedactions,
-        opa: opa ? { reason: opaDecision.reason } : undefined,
+        opa: opaClient ? { reason: opaDecision.reason } : undefined,
       },
     });
     const flags = [
@@ -722,7 +722,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
-      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via, opa: opa ? { reason: opaDecision.reason } : undefined },
+      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via, opa: opaClient ? { reason: opaDecision.reason } : undefined },
     });
     log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
