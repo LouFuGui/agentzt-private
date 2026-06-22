@@ -180,7 +180,7 @@ export class VaultClient {
   async renewLease(leaseId: string): Promise<void> {
     try {
       await this.request('PUT', '/v1/sys/leases/renew', { lease_id: leaseId });
-      log.debug(`Renewed Vault lease ${leaseId.slice(0, 20)}...`);
+      log.info(`Renewed Vault lease ${leaseId.slice(0, 20)}...`);
     } catch (err) {
       log.warn(`Failed to renew Vault lease: ${(err as Error).message}`);
     }
@@ -190,7 +190,7 @@ export class VaultClient {
     try {
       await this.request('PUT', '/v1/sys/leases/revoke', { lease_id: leaseId });
       this.leaseIds.delete(leaseId);
-      log.debug(`Revoked Vault lease ${leaseId.slice(0, 20)}...`);
+      log.info(`Revoked Vault lease ${leaseId.slice(0, 20)}...`);
     } catch (err) {
       log.warn(`Failed to revoke Vault lease: ${(err as Error).message}`);
     }
@@ -213,7 +213,7 @@ export class VaultClient {
       const resp = await this.request('POST', '/v1/auth/token/renew-self');
       const ttl = resp.auth?.lease_duration ?? 0;
       if (ttl > 0) this.tokenExpiry = Math.floor(Date.now() / 1000) + ttl;
-      log.debug('Renewed Vault client token');
+      log.info('Renewed Vault client token');
     } catch (err) {
       log.warn(`Failed to renew Vault client token: ${(err as Error).message}`);
     }

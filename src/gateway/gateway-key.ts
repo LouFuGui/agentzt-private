@@ -1,16 +1,14 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createPublicKey } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
-import { GATEWAY_KEY_FILE } from '../shared/paths.ts';
-import {
-  createPublicKey,
-} from 'node:crypto';
 import {
   generateEd25519,
   privateKeyFromJwk,
   publicKeyFromJwk,
 } from '../shared/crypto.ts';
 import type { Ed25519KeyPair } from '../shared/crypto.ts';
+import { GATEWAY_KEY_FILE } from '../shared/paths.ts';
 
 export type GatewaySigningKey = {
   privateKey: KeyObject;
@@ -34,18 +32,19 @@ export function loadOrCreateGatewayKey(): GatewaySigningKey {
     writeFileSync(GATEWAY_KEY_FILE, JSON.stringify(pair, null, 2));
   }
 
-  export function loadGatewayKeyFromPrivateJwk(privateKeyJwk: JsonWebKey): GatewaySigningKey {
-    const privateKey = privateKeyFromJwk(privateKeyJwk);
-    const publicKey = createPublicKey(privateKey);
-    return {
-      privateKey,
-      publicKey,
-      publicKeyJwk: publicKey.export({ format: 'jwk' }) as JsonWebKey,
-    };
-  }
   return {
     privateKey: privateKeyFromJwk(pair.privateKeyJwk),
     publicKey: publicKeyFromJwk(pair.publicKeyJwk),
     publicKeyJwk: pair.publicKeyJwk,
+  };
+}
+
+export function loadGatewayKeyFromPrivateJwk(privateKeyJwk: JsonWebKey): GatewaySigningKey {
+  const privateKey = privateKeyFromJwk(privateKeyJwk);
+  const publicKey = createPublicKey(privateKey);
+  return {
+    privateKey,
+    publicKey,
+    publicKeyJwk: publicKey.export({ format: 'jwk' }) as JsonWebKey,
   };
 }

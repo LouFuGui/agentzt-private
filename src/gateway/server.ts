@@ -1193,6 +1193,21 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   return { server, port: cfg.port, tls: !!tls };
 }
 
+async function loadGatewaySigningKey(vault: ReturnType<typeof resolveVaultConfig>) {
+  if (vault) {
+    try {
+      const privateKeyJwk = await getGatewaySigningKeyFromVault(vault);
+      if (privateKeyJwk) {
+        log.info('gateway signing key loaded from Vault');
+        return loadGatewayKeyFromPrivateJwk(privateKeyJwk);
+      }
+    } catch (err) {
+      log.warn(`Vault gateway signing key unavailable; using local key: ${(err as Error).message}`);
+    }
+  }
+  return loadOrCreateGatewayKey();
+}
+
 // ---- Anthropic Messages response helpers -----------------------------------
 
 function extractText(body: unknown): string {
