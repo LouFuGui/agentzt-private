@@ -119,6 +119,15 @@ export type OpaConfig = {
   failOpen: boolean;
 };
 
+export type TemporalConfig = {
+  enabled: boolean;
+  baseUrl: string;
+  namespace: string;
+  defaultTaskQueue: string;
+  timeoutMs: number;
+  apiKeyEnv?: string;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -132,6 +141,7 @@ export type GatewayConfig = {
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
   tls?: GatewayTlsConfig;
+  temporal?: TemporalConfig;
   sandbox?: {
     enabled: boolean;
     baseUrl: string;
