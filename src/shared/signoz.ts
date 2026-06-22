@@ -52,7 +52,7 @@ export class SigNozTelemetry {
   private config: ResolvedSignozConfig;
   private log?: Logger;
   private queue: AuditEvent[] = [];
-  private flushing = false;
+  private activeFlush?: Promise<void>;
   private timer?: NodeJS.Timeout;
   private warned = false;
 
@@ -76,23 +76,28 @@ export class SigNozTelemetry {
   }
 
   async flush(): Promise<void> {
-    if (this.flushing || this.queue.length === 0) return;
-    this.flushing = true;
+    if (this.activeFlush) return this.activeFlush;
+    if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
-    try {
-      await Promise.all([
-        this.post('/v1/traces', buildTracePayload(this.config.serviceName, batch)),
-        this.post('/v1/logs', buildLogPayload(this.config.serviceName, batch)),
-      ]);
-    } catch (err) {
-      this.queue.unshift(...batch);
-      if (!this.warned) {
-        this.warned = true;
-        this.log?.warn(`SigNoz export failed: ${(err as Error).message}`);
+
+    this.activeFlush = (async () => {
+      try {
+        await Promise.all([
+          this.post('/v1/traces', buildTracePayload(this.config.serviceName, batch)),
+          this.post('/v1/logs', buildLogPayload(this.config.serviceName, batch)),
+        ]);
+      } catch (err) {
+        this.queue.unshift(...batch);
+        if (!this.warned) {
+          this.warned = true;
+          this.log?.warn(`SigNoz export failed: ${(err as Error).message}`);
+        }
+      } finally {
+        this.activeFlush = undefined;
       }
-    } finally {
-      this.flushing = false;
-    }
+    })();
+
+    return this.activeFlush;
   }
 
   close(): void {
