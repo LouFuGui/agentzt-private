@@ -10,7 +10,8 @@ This guide explains how to integrate HashiCorp Vault with agentzt to:
 - **Auto-rotate credentials** for database connections
 - **Support HSM integration** (Enterprise tier) for hardware-bound keys
 - **Audit all secret access** with Vault's comprehensive logging
-- **Fail-safe design** with fallback to environment variables
+- **Fail-safe design** with explicit `failOpen` and environment-variable fallback for upstream keys
+- **No extra runtime dependency**: the client uses Node's built-in HTTP/HTTPS modules
 
 ## Architecture
 
@@ -20,7 +21,7 @@ agentzt-gateway (no secrets in code/env)
 Vault Client
     ├─ Authenticate (token, AppRole, K8s JWT)
     ├─ Read secrets (KV v2 backend)
-    ├─ Manage leases (auto-renew, revoke)
+    ├─ Manage token/lease renewal and shutdown revocation
     └─ Cache secrets (configurable TTL)
     ↓
 Vault Server
@@ -55,7 +56,7 @@ vault secrets enable -version=2 -path=secret kv
 
 # Store Anthropic API key
 vault kv put secret/agentzt/upstream-anthropic-key \
-  key="sk-ant-..." \
+  key="<anthropic-api-key>" \
   description="Anthropic Claude API key"
 
 # Store tool credentials (example: email)
@@ -65,7 +66,7 @@ vault kv put secret/agentzt/tools/email \
 
 # Store gateway signing key (Ed25519 JWK format)
 vault kv put secret/agentzt/gateway-signing-key \
-  privateKeyJwk='{"kty":"OKP","crv":"Ed25519","d":"..."}'
+  privateKeyJwk='{"kty":"OKP","crv":"Ed25519","x":"...","d":"..."}'
 
 # Verify secrets
 vault kv list secret/agentzt
@@ -110,9 +111,9 @@ npm run gateway
 npm run gateway
 
 # Output:
-# ✓ Vault secrets manager initialized
-# ✓ Vault authenticated (address: http://localhost:8200)
-# ✓ Auto-renewal started (interval: 3600000ms)
+# Vault authenticated (address: http://localhost:8200)
+# Vault secrets manager initialized
+# Vault secrets: ON (address=http://localhost:8200, failOpen=false)
 ```
 
 ## Authentication Methods
@@ -250,7 +251,7 @@ All paths use **KV v2** backend unless otherwise noted.
 **Anthropic API Key:**
 ```bash
 vault kv put secret/agentzt/upstream-anthropic-key \
-  key="sk-ant-v0-abc123..."
+  key="<anthropic-api-key>"
 ```
 
 **Tool Credentials (Email):**
@@ -280,7 +281,7 @@ openssl pkey -in gateway.key -text
 
 # Store JWK format
 vault kv put secret/agentzt/gateway-signing-key \
-  privateKeyJwk='{"kty":"OKP","crv":"Ed25519","d":"..."}'
+  privateKeyJwk='{"kty":"OKP","crv":"Ed25519","x":"...","d":"..."}'
 ```
 
 ## Dynamic Database Credentials
@@ -313,7 +314,7 @@ vault write database/roles/postgres-readonly \
 
 ```typescript
 // Automatically gets fresh credentials every time
-const creds = await getDatabaseCredentialsFromVault('postgres-readonly');
+const creds = await getDatabaseCredentialsFromVault(config.vault, 'postgres-readonly');
 // { username: 'v-token-abc123', password: 'xyz789', leaseId: '...', leaseDuration: 3600 }
 
 // Vault auto-rotates these after 1 hour (default_ttl)
@@ -325,8 +326,8 @@ await revokeLease(creds.leaseId);
 
 ```typescript
 interface VaultConfig {
+  enabled: boolean;
   server: {
-    enabled: boolean;
     address: string;           // e.g., 'http://localhost:8200'
     namespace?: string;        // Enterprise edition
     tls?: {
@@ -391,6 +392,9 @@ vault write -f auth/approle/role/agentzt-gateway/secret-id
   }
 }
 ```
+
+The Vault client supports CA pinning and client certificates with Node built-ins. Avoid
+`skip_verify` except in disposable local development.
 
 ### 3. HSM Integration (Enterprise)
 
@@ -502,7 +506,7 @@ vault policy read agentzt-policy
 
 ```bash
 # Before (env vars)
-export AGENTZT_UPSTREAM_ANTHROPIC_KEY="sk-ant-..."
+export AGENTZT_UPSTREAM_ANTHROPIC_KEY="<anthropic-api-key>"
 
 # After (Vault)
 export VAULT_ADDR='http://localhost:8200'
