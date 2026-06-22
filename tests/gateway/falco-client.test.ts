@@ -7,6 +7,7 @@ const config = {
   sharedSecretEnv: 'AGENTZT_FALCO_WEBHOOK_SECRET',
   minimumPriority: 'warning' as const,
   denyWindowSeconds: 300,
+  maxEvents: 1000,
   agentIdFields: ['agentzt.agent_id', 'container.name'],
 };
 

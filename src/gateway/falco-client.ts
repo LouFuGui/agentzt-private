@@ -8,6 +8,8 @@ export type FalcoEventInput = {
   output_fields?: Record<string, unknown>;
 };
 
+export type FalcoWebhookPayload = FalcoEventInput | FalcoEventInput[];
+
 export type FalcoRuntimeAlert = {
   agentId: string | null;
   rule: string;
@@ -38,6 +40,7 @@ const DEFAULT_FALCO: FalcoConfig = {
   sharedSecretEnv: 'AGENTZT_FALCO_WEBHOOK_SECRET',
   minimumPriority: 'warning',
   denyWindowSeconds: 300,
+  maxEvents: 1000,
   agentIdFields: ['agentzt.agent_id', 'container.name', 'k8s.pod.name'],
 };
 
@@ -80,7 +83,6 @@ function parseTime(value: unknown): Date {
 export class FalcoRuntimeMonitor {
   readonly config: FalcoConfig;
   private alerts: FalcoRuntimeAlert[] = [];
-  private maxAlerts = 1000;
 
   constructor(config: FalcoConfig) {
     this.config = config;
@@ -109,13 +111,13 @@ export class FalcoRuntimeMonitor {
       fields,
     };
     this.alerts.push(alert);
-    if (this.alerts.length > this.maxAlerts) {
-      this.alerts.splice(0, this.alerts.length - this.maxAlerts);
+    if (this.alerts.length > this.config.maxEvents) {
+      this.alerts.splice(0, this.alerts.length - this.config.maxEvents);
     }
     return alert;
   }
 
-  recordMany(input: FalcoEventInput | FalcoEventInput[]): FalcoRuntimeAlert[] {
+  recordMany(input: FalcoWebhookPayload): FalcoRuntimeAlert[] {
     return (Array.isArray(input) ? input : [input]).map((event) => this.record(event));
   }
 

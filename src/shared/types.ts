@@ -138,6 +138,8 @@ export type FalcoConfig = {
   // Alerts at or above this priority deny matching agents for denyWindowSeconds.
   minimumPriority: FalcoPriority;
   denyWindowSeconds: number;
+  // In-memory ring size for recent alerts; avoids unbounded growth in long-running gateways.
+  maxEvents: number;
   // Output field names that can bind a Falco event to an agent id.
   agentIdFields: string[];
 };

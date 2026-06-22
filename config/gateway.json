@@ -62,6 +62,7 @@
     "sharedSecretEnv": "AGENTZT_FALCO_WEBHOOK_SECRET",
     "minimumPriority": "warning",
     "denyWindowSeconds": 300,
+    "maxEvents": 1000,
     "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"]
   },
   "tls": {

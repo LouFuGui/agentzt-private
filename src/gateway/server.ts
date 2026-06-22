@@ -48,7 +48,7 @@ import { createGuardrailProvider } from './guardrail-providers.ts';
 import { OpaClient, resolveOpaConfig } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
 import { FalcoRuntimeMonitor, resolveFalcoConfig } from './falco-client.ts';
-import type { FalcoRuntimeDecision } from './falco-client.ts';
+import type { FalcoRuntimeDecision, FalcoWebhookPayload } from './falco-client.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
 
@@ -425,7 +425,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       return sendError(res, 400, 'invalid_request', 'Falco event must be an object or array');
     }
 
-    const alerts = falco.recordMany(body as Parameters<FalcoRuntimeMonitor['recordMany']>[0]);
+    const alerts = falco.recordMany(body as FalcoWebhookPayload);
     for (const alert of alerts) {
       audit.record({
         requestId: rid,
@@ -845,9 +845,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const auth = authorizeExtended(req, res);
     if (!auth) return;
 
-    if (auth.type === 'agent_token') {
-      if (blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
-    }
+    if (auth.type === 'agent_token' && blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
     
     const started = Date.now();
     const body = await readJson<Record<string, unknown>>(req);

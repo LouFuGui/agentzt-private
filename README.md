@@ -104,6 +104,7 @@ Optional **Falco** runtime enforcement is configured under `falco` in `config/ga
 agent while a recent alert at or above `minimumPriority` is active. Bind events to agents by
 including one of the configured `agentIdFields` (default `agentzt.agent_id`,
 `container.name`, or `k8s.pod.name`) in Falco `output_fields`.
+`maxEvents` bounds the in-memory alert cache for long-running gateways.
 
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
