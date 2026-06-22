@@ -137,6 +137,16 @@ Optional **HashiCorp Vault** integration is configured under `vault` in
 initializes Vault at startup, can load its signing key from Vault, fetches passthrough model
 API keys from Vault, and passes tool-specific Vault credentials into tool execution.
 
+Optional **Falco** runtime enforcement is configured under `falco` in `config/gateway.json`
+(or enabled with `AGENTZT_FALCO=1`). Point Falco/Falcosidekick HTTP output at
+`/v1/falco/events`; the gateway records events and denies future calls from a matching
+agent while a recent alert at or above `minimumPriority` is active. Bind events to agents by
+including one of the configured `agentIdFields` (default `agentzt.agent_id`,
+`container.name`, or `k8s.pod.name`) in Falco `output_fields`.
+`maxEvents` bounds the in-memory alert cache for long-running gateways.
+Set the configured `sharedSecretEnv` (default `AGENTZT_FALCO_SECRET`) to require a bearer
+or `x-agentzt-falco-secret` secret on webhook requests.
+
 ### Guardrails (input/output) — powered by OpenGuardrails
 
 The gateway runs a **context-aware guardrail** on every model call (input) and response

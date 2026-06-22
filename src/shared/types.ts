@@ -138,6 +138,31 @@ export type TemporalConfig = {
   apiKeyEnv?: string;
 };
 
+export type FalcoPriority =
+  | 'emergency'
+  | 'alert'
+  | 'critical'
+  | 'error'
+  | 'warning'
+  | 'notice'
+  | 'informational'
+  | 'debug';
+
+export type FalcoConfig = {
+  enabled: boolean;
+  // Falco/Falcosidekick webhook endpoint exposed by the gateway.
+  webhookPath: string;
+  // Optional shared secret env var. When set, POSTs must present it as bearer or x-agentzt-falco-secret.
+  sharedSecretEnv: string;
+  // Alerts at or above this priority deny matching agents for denyWindowSeconds.
+  minimumPriority: FalcoPriority;
+  denyWindowSeconds: number;
+  // In-memory ring size for recent alerts; avoids unbounded growth in long-running gateways.
+  maxEvents: number;
+  // Output field names that can bind a Falco event to an agent id.
+  agentIdFields: string[];
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -154,6 +179,7 @@ export type GatewayConfig = {
   signoz?: SignozConfig;
   tls?: GatewayTlsConfig;
   temporal?: TemporalConfig;
+  falco?: FalcoConfig;
   sandbox?: {
     enabled: boolean;
     baseUrl: string;
@@ -210,7 +236,9 @@ export type AuditAction =
   | 'proxy.call'
   | 'guardrails.check'
   | 'direct.call'
-  | 'quota.exceeded';
+  | 'quota.exceeded'
+  | 'falco.event'
+  | 'falco.block';
 
 export type AuditEvent = {
   ts: string;

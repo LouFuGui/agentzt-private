@@ -23,6 +23,7 @@ import type {
   GatewayTlsConfig,
   GatewayConfig,
   OpaConfig,
+  FalcoConfig,
   AccessTokenClaims,
   GuardrailConfig,
   AuthResult,
@@ -46,6 +47,8 @@ import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
 import { OpaClient, resolveOpaConfig } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
+import { FalcoRuntimeMonitor, resolveFalcoConfig } from './falco-client.ts';
+import type { FalcoRuntimeDecision, FalcoWebhookPayload } from './falco-client.ts';
 import { resolveVaultConfig } from './vault-config.ts';
 import {
   getGatewaySigningKeyFromVault,
@@ -76,6 +79,11 @@ const log = makeLogger('gateway');
 function createOpaClient(config?: OpaConfig): OpaClient | null {
   const resolved = resolveOpaConfig(config);
   return resolved ? new OpaClient(resolved) : null;
+}
+
+function createFalcoMonitor(config?: FalcoConfig): FalcoRuntimeMonitor | null {
+  const resolved = resolveFalcoConfig(config);
+  return resolved ? new FalcoRuntimeMonitor(resolved) : null;
 }
 
 // TLS is enabled by config (cfg.tls.enabled) or the AGENTZT_TLS=1 env override
@@ -109,6 +117,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   const opaClient = createOpaClient(cfg.opa);
   const signozConfig = resolveSignozConfig(cfg.signoz);
   const telemetry = signozConfig ? new SigNozTelemetry(signozConfig, log) : null;
+  const falco = createFalcoMonitor(cfg.falco);
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
@@ -116,6 +125,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
   if (opaClient) log.info(`OPA policy: ON (path=${opaClient.config.policyPath}, failOpen=${opaClient.config.failOpen})`);
   if (signozConfig) log.info(`SigNoz telemetry: ON (endpoint=${signozConfig.endpoint}, service=${signozConfig.serviceName})`);
+  if (falco) log.info(`Falco runtime policy: ON (webhook=${falco.config.webhookPath}, minimum=${falco.config.minimumPriority})`);
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
@@ -353,6 +363,10 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         });
       }
 
+      if (method === 'POST' && falco && path === falco.config.webhookPath) {
+        return await handleFalcoEvent(req, res, rid);
+      }
+
       if (method === 'POST' && path === '/v1/token') {
         return await handleToken(req, res, rid);
       }
@@ -408,6 +422,54 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   server.on('close', () => {
     void shutdownVault();
   });
+
+  async function handleFalcoEvent(req: IncomingMessage, res: ServerResponse, rid: string) {
+    if (!falco) return sendError(res, 404, 'not_found', 'Falco integration is disabled');
+
+    const secret = falco.verifySecret(
+      headerValue(req, 'authorization'),
+      headerValue(req, 'x-agentzt-falco-secret'),
+    );
+    if (!secret.allow) {
+      recordAudit({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        action: 'falco.event',
+        resource: 'falco',
+        decision: 'deny',
+        reason: secret.reason,
+      });
+      return sendError(res, 401, 'authentication_error', secret.reason);
+    }
+
+    const body = await readJson<unknown>(req);
+    if (!body || (typeof body !== 'object' && !Array.isArray(body))) {
+      return sendError(res, 400, 'invalid_request', 'Falco event must be an object or array');
+    }
+
+    const alerts = falco.recordMany(body as FalcoWebhookPayload);
+    for (const alert of alerts) {
+      recordAudit({
+        requestId: rid,
+        agentId: alert.agentId,
+        role: null,
+        action: 'falco.event',
+        resource: alert.rule,
+        decision: 'allow',
+        reason: alert.agentId
+          ? `Falco ${alert.priority} event accepted`
+          : 'Falco event accepted without agent binding',
+        meta: {
+          priority: alert.priority,
+          output: alert.output,
+          fields: alert.fields,
+        },
+      });
+    }
+
+    return sendJson(res, 202, { accepted: alerts.length });
+  }
 
   async function handleToken(req: IncomingMessage, res: ServerResponse, rid: string) {
     const body = await readJson<{ assertion?: string }>(req);
@@ -527,6 +589,36 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     return { ...decision, input };
   }
 
+  function decideFalco(agentId: string): FalcoRuntimeDecision {
+    if (!falco) return { allow: true, reason: 'Falco disabled' };
+    return falco.decideAgent(agentId);
+  }
+
+  function blockFalcoIfNeeded(
+    res: ServerResponse,
+    rid: string,
+    agentId: string | null | undefined,
+    role: string | null | undefined,
+    resource: string,
+  ): boolean {
+    if (!agentId) return false;
+    const falcoDecision = decideFalco(agentId);
+    if (falcoDecision.allow) return false;
+    recordAudit({
+      requestId: rid,
+      agentId,
+      role: role ?? null,
+      action: 'falco.block',
+      resource,
+      decision: 'deny',
+      reason: falcoDecision.reason,
+      meta: { falco: falcoDecision.alert },
+    });
+    log.deny(`falco.block ${agentId} -> ${resource}: ${falcoDecision.reason}`);
+    sendError(res, 403, 'permission_error', falcoDecision.reason);
+    return true;
+  }
+
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
     const claims = authorize(req, res);
     if (!claims) return;
@@ -534,6 +626,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const body = await readJson<Record<string, unknown>>(req);
     const model = typeof body['model'] === 'string' ? (body['model'] as string) : '';
     if (!model) return sendError(res, 400, 'invalid_request', 'missing "model"');
+
+    if (blockFalcoIfNeeded(res, rid, claims.sub, claims.role, model)) return;
 
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'model', model);
@@ -660,6 +754,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     if (!claims) return;
     const started = Date.now();
 
+    if (blockFalcoIfNeeded(res, rid, claims.sub, claims.role, name)) return;
+
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'tool', name);
     if (!authz.allow) {
@@ -780,6 +876,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   ): Promise<void> {
     const auth = authorizeExtended(req, res);
     if (!auth) return;
+
+    if (auth.type === 'agent_token' && blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
     
     const started = Date.now();
     const body = await readJson<Record<string, unknown>>(req);

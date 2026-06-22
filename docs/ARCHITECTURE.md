@@ -45,6 +45,8 @@ The Policy Decision Point (PDP) and Policy Enforcement Point (PEP).
   secret redaction, and message flattening.
 - `guardrail-providers.ts` — pluggable detector interface with two providers (OpenGuardrails
   API, local regex) and a factory.
+- `falco-client.ts` — optional Falco/Falcosidekick webhook monitor that turns runtime
+  alerts into per-agent deny decisions.
 - `upstream.ts` — `mock` (offline) or `passthrough` (real Model API, enterprise key held here).
 - `server.ts` — routing, authorization, guardrails, and audit on every request.
 
@@ -114,16 +116,18 @@ Each model/tool call is authorized in layers — any layer can deny:
    client without a certificate signed by the agentzt CA, and channel binding ties the
    token to the cert (`CN == sub`).
 1. **Authentication** — valid, unexpired access token (signature + issuer + exp).
-2. **Resource authorization** — resource in the token's standing scope AND permitted by
+2. **Falco runtime signal** — optional runtime security alerts can temporarily deny a
+   matching agent before it reaches model/tool execution.
+3. **Resource authorization** — resource in the token's standing scope AND permitted by
    live RBAC; otherwise a valid JIT elevation grant for exactly that resource (`authVia`
    records `scope` vs `jit`).
-3. **Rate limit** — per-agent sliding window (resource-exhaustion containment).
-4. **Input guardrail** — context-aware prompt-injection / safety check (block | flag | off).
-5. **ABAC** — operating hours + risk-adaptive (risk level from the input guardrail).
-6. **OPA policy** — optional sidecar PDP check; it receives the request context and can only
+4. **Rate limit** — per-agent sliding window (resource-exhaustion containment).
+5. **Input guardrail** — context-aware prompt-injection / safety check (block | flag | off).
+6. **ABAC** — operating hours + risk-adaptive (risk level from the input guardrail).
+7. **OPA policy** — optional sidecar PDP check; it receives the request context and can only
    add an extra deny after local least-privilege controls pass.
-7. **Execution** — forward to upstream model / run the tool.
-8. **Output guardrail** — context-aware output review + secret redaction before the response
+8. **Execution** — forward to upstream model / run the tool.
+9. **Output guardrail** — context-aware output review + secret redaction before the response
    reaches the agent.
 
 ## Trust boundaries
@@ -158,6 +162,8 @@ so the audit log reconstructs the full chain from triggering event to outcome.
 - **Mutual TLS** — opt-in client↔gateway mTLS with an internal CA (`cli/tls.ts`),
   CA pinning + optional leaf pinning (`client/transport.ts`), and channel binding
   (cert `CN` == token `sub`) so tokens can't be replayed across channels.
+- **Falco runtime enforcement** — optional Falco/Falcosidekick webhook ingestion that
+  blocks matching agents after high-priority runtime alerts (`falco-client.ts`).
 
 ## Roadmap (remaining Enterprise / Advanced tiers)
 

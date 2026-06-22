@@ -86,5 +86,15 @@
     "defaultTaskQueue": "agentzt-tasks",
     "timeoutMs": 5000,
     "apiKeyEnv": "TEMPORAL_API_KEY"
+  },
+  "falco": {
+    "_comment": "Optional Falco runtime security integration. Point Falco/Falcosidekick HTTP output at webhookPath. Alerts at or above minimumPriority deny matching agents for denyWindowSeconds.",
+    "enabled": false,
+    "webhookPath": "/v1/falco/events",
+    "sharedSecretEnv": "AGENTZT_FALCO_SECRET",
+    "minimumPriority": "warning",
+    "denyWindowSeconds": 300,
+    "maxEvents": 1000,
+    "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"]
   }
 }
