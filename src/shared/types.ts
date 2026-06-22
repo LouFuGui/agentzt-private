@@ -3,12 +3,17 @@
 export type Tier = 'foundation' | 'enterprise' | 'advanced';
 
 /** Public registry entry: binds a cryptographic identity to an agent and role. */
+export type AgentLifecycleStatus = 'active' | 'disabled' | 'revoked';
+
 export type AgentRegistryEntry = {
   agentId: string;
   role: string;
   publicKeyJwk: JsonWebKey;
   description?: string;
+  status?: AgentLifecycleStatus;
   disabled?: boolean;
+  revokedAt?: string;
+  revokedReason?: string;
   createdAt?: string;
 };
 
@@ -57,10 +62,27 @@ export type RolePolicy = {
   jit?: JitPolicy;
 };
 
+export type EnterpriseResourceClass = {
+  description?: string;
+  kind: 'model' | 'tool';
+  resources: string[];
+  jitRequired?: boolean;
+};
+
+export type EnterprisePolicyModel = {
+  version: number;
+  agentLifecycle: {
+    denyStatuses: AgentLifecycleStatus[];
+  };
+  decisionOrder: string[];
+  resourceClasses?: Record<string, EnterpriseResourceClass>;
+};
+
 export type PolicyDoc = {
   version: number;
   defaultDeny: boolean;
   roles: Record<string, RolePolicy>;
+  enterprise?: EnterprisePolicyModel;
 };
 
 export type OpenGuardrailsConfig = {

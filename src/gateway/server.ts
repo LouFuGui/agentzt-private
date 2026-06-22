@@ -153,6 +153,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   function authorize(
     req: IncomingMessage,
     res: ServerResponse,
+    rid?: string,
+    resource = 'access-token',
   ): AccessTokenClaims | null {
     const token = bearerToken(req);
     if (!token) {
@@ -163,7 +165,19 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     try {
       claims = tokens.verifyAccessToken(token);
     } catch (err) {
-      sendError(res, 401, 'authentication_error', (err as Error).message);
+      const reason = (err as Error).message;
+      if (rid) {
+        recordAudit({
+          requestId: rid,
+          agentId: null,
+          role: null,
+          action: 'token.reject',
+          resource,
+          decision: 'deny',
+          reason,
+        });
+      }
+      sendError(res, reason.includes('disabled') || reason.includes('revoked') ? 403 : 401, 'authentication_error', reason);
       return null;
     }
     // Channel binding: the token may only be used over a TLS channel
@@ -186,6 +200,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   function authorizeExtended(
     req: IncomingMessage,
     res: ServerResponse,
+    rid?: string,
+    resource = 'access-token',
   ): AuthResult | null {
     // Try Agent Token first (existing flow)
     const token = bearerToken(req);
@@ -223,7 +239,19 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
           scope: claims.scope,
         };
       } catch (err) {
-        sendError(res, 401, 'authentication_error', (err as Error).message);
+        const reason = (err as Error).message;
+        if (rid) {
+          recordAudit({
+            requestId: rid,
+            agentId: null,
+            role: null,
+            action: 'token.reject',
+            resource,
+            decision: 'deny',
+            reason,
+          });
+        }
+        sendError(res, reason.includes('disabled') || reason.includes('revoked') ? 403 : 401, 'authentication_error', reason);
         return null;
       }
     }
@@ -510,7 +538,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleElevate(req: IncomingMessage, res: ServerResponse, rid: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, 'elevation');
     if (!claims) return;
     const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number }>(req);
     const kind = body.kind === 'model' || body.kind === 'tool' ? body.kind : null;
@@ -620,7 +648,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, 'model');
     if (!claims) return;
     const started = Date.now();
     const body = await readJson<Record<string, unknown>>(req);
@@ -750,7 +778,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleTool(req: IncomingMessage, res: ServerResponse, rid: string, name: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, name);
     if (!claims) return;
     const started = Date.now();
 
@@ -874,7 +902,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     rid: string,
     targetPath: string,
   ): Promise<void> {
-    const auth = authorizeExtended(req, res);
+    const auth = authorizeExtended(req, res, rid, targetPath);
     if (!auth) return;
 
     if (auth.type === 'agent_token' && blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
@@ -1018,7 +1046,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     res: ServerResponse,
     rid: string,
   ): Promise<void> {
-    const auth = authorizeExtended(req, res);
+    const auth = authorizeExtended(req, res, rid, 'guardrails');
     if (!auth) return;
 
     const started = Date.now();

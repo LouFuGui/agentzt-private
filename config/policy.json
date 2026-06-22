@@ -1,6 +1,44 @@
 {
   "version": 1,
   "defaultDeny": true,
+  "enterprise": {
+    "_comment": "Enterprise policy model foundation. Legacy roles remain authoritative for current enforcement; this section names the lifecycle gates, decision order, and high-blast-radius resource classes for enterprise governance tooling.",
+    "version": 1,
+    "agentLifecycle": {
+      "denyStatuses": ["disabled", "revoked"]
+    },
+    "decisionOrder": [
+      "mtls",
+      "token",
+      "agent_lifecycle",
+      "runtime_signal",
+      "rbac_or_jit",
+      "rate_limit",
+      "input_guardrail",
+      "abac",
+      "opa",
+      "execution",
+      "output_guardrail"
+    ],
+    "resourceClasses": {
+      "standard-models": {
+        "description": "Approved standing model API access.",
+        "kind": "model",
+        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6"]
+      },
+      "read-only-tools": {
+        "description": "Low-blast-radius read-only tools suitable for standing scope.",
+        "kind": "tool",
+        "resources": ["kb.search", "db.query", "web.fetch", "temporal.workflow.query"]
+      },
+      "high-blast-radius-tools": {
+        "description": "Actions that should require explicit JIT or custom enterprise approval.",
+        "kind": "tool",
+        "resources": ["email.send", "temporal.workflow.start", "temporal.workflow.signal"],
+        "jitRequired": true
+      }
+    }
+  },
   "_comment": "Deny-by-default RBAC. An agent's role grants an explicit allow-list of models and tools. Anything not listed is denied. This is the Foundation-tier 'least agency' control: each agent reaches only the model APIs and tools its function requires.",
   "roles": {
     "demo-agent": {

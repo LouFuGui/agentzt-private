@@ -70,7 +70,11 @@ export class TokenService {
 
       const identity = this.identities.get(agentId);
       if (!identity) {
-        return { ok: false, status: 401, reason: `unknown or disabled agent "${agentId}"`, agentId };
+        return { ok: false, status: 401, reason: `unknown agent "${agentId}"`, agentId };
+      }
+      const lifecycle = this.identities.decideAgent(agentId);
+      if (!lifecycle.allow) {
+        return { ok: false, status: 403, reason: lifecycle.reason, agentId };
       }
 
       // Signature check against the REGISTERED public key (never trust kid alone).
@@ -185,6 +189,11 @@ export class TokenService {
     const now = Math.floor(Date.now() / 1000);
     if (claims.iss !== this.cfg.issuer) throw new Error('issuer mismatch');
     if (claims.exp <= now) throw new Error('access token expired');
+    const identity = this.identities.get(claims.sub);
+    if (!identity) throw new Error(`unknown agent "${claims.sub}"`);
+    const lifecycle = this.identities.decideAgent(claims.sub);
+    if (!lifecycle.allow) throw new Error(lifecycle.reason);
+    if (identity.entry.role !== claims.role) throw new Error(`agent "${claims.sub}" role changed`);
     return claims;
   }
 }

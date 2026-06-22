@@ -1,4 +1,11 @@
-import type { PolicyDoc, RolePolicy, Decision, RiskLevel } from '../shared/types.ts';
+import type {
+  EnterprisePolicyModel,
+  EnterpriseResourceClass,
+  PolicyDoc,
+  RolePolicy,
+  Decision,
+  RiskLevel,
+} from '../shared/types.ts';
 
 const RISK_ORDINAL: Record<string, number> = {
   no_risk: 0,
@@ -6,6 +13,28 @@ const RISK_ORDINAL: Record<string, number> = {
   medium_risk: 2,
   high_risk: 3,
 };
+
+const DEFAULT_ENTERPRISE_DECISION_ORDER = [
+  'mtls',
+  'token',
+  'agent_lifecycle',
+  'runtime_signal',
+  'rbac_or_jit',
+  'rate_limit',
+  'input_guardrail',
+  'abac',
+  'opa',
+  'execution',
+  'output_guardrail',
+];
+
+function defaultEnterprisePolicy(): EnterprisePolicyModel {
+  return {
+    version: 1,
+    agentLifecycle: { denyStatuses: ['disabled', 'revoked'] },
+    decisionOrder: DEFAULT_ENTERPRISE_DECISION_ORDER,
+  };
+}
 
 /**
  * Deny-by-default RBAC policy engine (Foundation tier "least agency").
@@ -24,6 +53,21 @@ export class PolicyEngine {
 
   getRole(role: string): RolePolicy | undefined {
     return this.policy.roles[role];
+  }
+
+  enterprisePolicy(): EnterprisePolicyModel {
+    return this.policy.enterprise ?? defaultEnterprisePolicy();
+  }
+
+  resourceClassFor(kind: 'model' | 'tool', name: string): EnterpriseResourceClass | null {
+    const classes = this.enterprisePolicy().resourceClasses ?? {};
+    for (const resourceClass of Object.values(classes)) {
+      if (resourceClass.kind !== kind) continue;
+      if (resourceClass.resources.includes('*') || resourceClass.resources.includes(name)) {
+        return resourceClass;
+      }
+    }
+    return null;
   }
 
   /** Models/tools an agent in this role may use — used to scope its token. */
