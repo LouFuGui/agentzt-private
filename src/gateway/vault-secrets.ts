@@ -62,7 +62,11 @@ export async function getToolCredentialsFromVault(
     const creds = await client.getToolCredentials(toolName);
     const stringCreds: Record<string, string> = {};
     for (const [key, value] of Object.entries(creds)) {
-      stringCreds[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      if (typeof value === 'object') {
+        log.warn(`Ignoring non-primitive Vault credential "${key}" for tool ${toolName}`);
+        continue;
+      }
+      stringCreds[key] = String(value);
     }
     return stringCreds;
   } catch (err) {

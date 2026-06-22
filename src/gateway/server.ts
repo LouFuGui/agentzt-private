@@ -405,7 +405,6 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     if (!body.assertion) {
       return sendError(res, 400, 'invalid_request', 'missing "assertion"');
     }
-
     const result = tokens.issue(body.assertion, tokenAudience);
     if (!result.ok) {
       audit.record({

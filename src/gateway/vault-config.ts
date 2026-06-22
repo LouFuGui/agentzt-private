@@ -32,7 +32,7 @@ export interface VaultServerConfig {
   address: string;
   namespace?: string;
   tls?: {
-    skip_verify?: false;
+    skip_verify?: boolean;
     ca_cert?: string;
     client_cert?: string;
     client_key?: string;

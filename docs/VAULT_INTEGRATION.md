@@ -331,7 +331,7 @@ interface VaultConfig {
     address: string;           // e.g., 'http://localhost:8200'
     namespace?: string;        // Enterprise edition
     tls?: {
-      skip_verify?: false;     // certificate verification cannot be disabled
+      skip_verify?: boolean;   // true is rejected at runtime
       ca_cert?: string;
       client_cert?: string;
       client_key?: string;

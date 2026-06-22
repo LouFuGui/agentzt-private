@@ -120,8 +120,8 @@ export class VaultClient {
   }
 
   async getToolCredentials(toolName: string): Promise<SecretData> {
-    const safeName = encodeURIComponent(toolName).replace(/%2F/gi, '/');
-    const secret = await this.readSecret(`${this.secretPaths.toolsPrefix}/${safeName}`);
+    if (toolName.includes('/')) throw new Error('Vault tool credential names must not contain "/"');
+    const secret = await this.readSecret(`${this.secretPaths.toolsPrefix}/${encodeURIComponent(toolName)}`);
     return secret.data;
   }
 
@@ -255,21 +255,37 @@ export class VaultClient {
 
     const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
     return await new Promise<VaultResponse>((resolve, reject) => {
+      let settled = false;
       const req = transport(options, (resp) => {
         const chunks: Buffer[] = [];
         resp.on('data', (chunk: Buffer) => chunks.push(chunk));
         resp.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
           const data = text ? JSON.parse(text) as VaultResponse : {};
-          if ((resp.statusCode ?? 500) < 200 || (resp.statusCode ?? 500) >= 300) {
+          const statusCode = resp.statusCode ?? 500;
+          if (statusCode < 200 || statusCode >= 300) {
+            settled = true;
             reject(new Error(`Vault error: ${resp.statusCode} ${data.errors?.join(', ') ?? data.error ?? ''}`.trim()));
             return;
           }
+          settled = true;
           resolve(data);
         });
       });
-      req.on('timeout', () => req.destroy(new Error(`Vault request timed out after ${options.timeout}ms`)));
-      req.on('error', reject);
+      req.setTimeout(this.config.timeoutMs ?? 5000, () => {
+        const err = new Error(`Vault request timed out after ${options.timeout}ms`);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+        req.destroy(err);
+      });
+      req.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      });
       if (payload) req.write(payload);
       req.end();
     });
