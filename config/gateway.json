@@ -55,6 +55,15 @@
     "timeoutMs": 1000,
     "failOpen": false
   },
+  "falco": {
+    "_comment": "Optional Falco runtime security integration. Point Falco/Falcosidekick HTTP output at webhookPath. Alerts at or above minimumPriority deny matching agents for denyWindowSeconds.",
+    "enabled": false,
+    "webhookPath": "/v1/falco/events",
+    "sharedSecretEnv": "AGENTZT_FALCO_WEBHOOK_SECRET",
+    "minimumPriority": "warning",
+    "denyWindowSeconds": 300,
+    "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"]
+  },
   "tls": {
     "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1).",
     "enabled": false,

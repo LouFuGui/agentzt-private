@@ -98,6 +98,13 @@ and ABAC pass; OPA can only add an extra deny. The default policy path is
 `agentzt/authz/decision`, returning either a boolean `result` or
 `{ "allow": boolean, "reason": string }`.
 
+Optional **Falco** runtime enforcement is configured under `falco` in `config/gateway.json`
+(or enabled with `AGENTZT_FALCO=1`). Point Falco/Falcosidekick HTTP output at
+`/v1/falco/events`; the gateway records events and denies future calls from a matching
+agent while a recent alert at or above `minimumPriority` is active. Bind events to agents by
+including one of the configured `agentIdFields` (default `agentzt.agent_id`,
+`container.name`, or `k8s.pod.name`) in Falco `output_fields`.
+
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
 
