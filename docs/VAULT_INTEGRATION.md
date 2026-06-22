@@ -331,7 +331,7 @@ interface VaultConfig {
     address: string;           // e.g., 'http://localhost:8200'
     namespace?: string;        // Enterprise edition
     tls?: {
-      skip_verify?: boolean;   // NOT for production
+      skip_verify?: false;     // certificate verification cannot be disabled
       ca_cert?: string;
       client_cert?: string;
       client_key?: string;
@@ -393,8 +393,8 @@ vault write -f auth/approle/role/agentzt-gateway/secret-id
 }
 ```
 
-The Vault client supports CA pinning and client certificates with Node built-ins. Avoid
-`skip_verify` except in disposable local development.
+The Vault client supports CA pinning and client certificates with Node built-ins. It rejects
+configurations that disable certificate verification.
 
 ### 3. HSM Integration (Enterprise)
 

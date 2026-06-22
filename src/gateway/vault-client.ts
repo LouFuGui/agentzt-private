@@ -171,7 +171,9 @@ export class VaultClient {
 
     if (this.config.cache?.enabled) {
       const configuredTtl = this.config.cache.ttlMs ?? 300000;
-      const leaseTtl = secret.leaseDuration > 0 ? Math.max(1000, Math.floor(secret.leaseDuration * 800)) : configuredTtl;
+      const leaseTtl = secret.leaseDuration > 0
+        ? Math.max(1000, Math.floor(secret.leaseDuration * 1000 * 0.8))
+        : configuredTtl;
       this.secretCache.set(path, { secret, expiry: Date.now() + Math.min(configuredTtl, leaseTtl) });
     }
     return secret;
@@ -204,7 +206,7 @@ export class VaultClient {
       }
       for (const leaseId of Array.from(this.leaseIds)) await this.renewLease(leaseId);
     }, interval);
-    this.renewalIntervalId.unref?.();
+    this.renewalIntervalId.unref();
     log.info(`Vault auto-renewal started (interval: ${interval}ms)`);
   }
 
@@ -300,8 +302,10 @@ function unwrapKvData(data: Record<string, unknown> | undefined): SecretData {
 function tlsOptions(config: VaultConfig): RequestOptions {
   const tls = config.server.tls;
   if (!tls) return {};
+  if (tls.skip_verify) {
+    throw new Error('Vault TLS certificate verification cannot be disabled');
+  }
   return {
-    rejectUnauthorized: tls.skip_verify ? false : undefined,
     ca: tls.ca_cert ? readFileSync(tls.ca_cert) : undefined,
     cert: tls.client_cert ? readFileSync(tls.client_cert) : undefined,
     key: tls.client_key ? readFileSync(tls.client_key) : undefined,

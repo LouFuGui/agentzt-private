@@ -406,22 +406,6 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 400, 'invalid_request', 'missing "assertion"');
     }
 
-    async function loadGatewaySigningKey(
-      vault: ReturnType<typeof resolveVaultConfig>,
-    ) {
-      if (vault) {
-        try {
-          const privateKeyJwk = await getGatewaySigningKeyFromVault(vault);
-          if (privateKeyJwk) {
-            log.info('gateway signing key loaded from Vault');
-            return loadGatewayKeyFromPrivateJwk(privateKeyJwk);
-          }
-        } catch (err) {
-          log.warn(`Vault gateway signing key unavailable; using local key: ${(err as Error).message}`);
-        }
-      }
-      return loadOrCreateGatewayKey();
-    }
     const result = tokens.issue(body.assertion, tokenAudience);
     if (!result.ok) {
       audit.record({
