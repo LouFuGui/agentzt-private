@@ -55,6 +55,8 @@ import {
 } from './vault-secrets.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
+import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
+import type { AuditEvent } from '../shared/types.ts';
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
   provider: 'auto',
@@ -91,7 +93,7 @@ function resolveTls(cfg: GatewayConfig): GatewayTlsConfig | null {
   return cfg.tls?.enabled ? cfg.tls : null;
 }
 
-export async function createGatewayServer(): Promise<{ server: Server; port: number; tls: boolean }> {
+export async function createGatewayServer(): Promise<{ server: Server; port: number; tls: boolean; telemetry: SigNozTelemetry | null }> {
   const cfg = loadGatewayConfig();
   const vault = resolveVaultConfig(cfg.vault);
   cfg.vault = vault ?? undefined;
@@ -105,12 +107,15 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
   const guard = createGuardrailProvider(guardrails);
   const opaClient = createOpaClient(cfg.opa);
+  const signozConfig = resolveSignozConfig(cfg.signoz);
+  const telemetry = signozConfig ? new SigNozTelemetry(signozConfig, log) : null;
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
   if (opaClient) log.info(`OPA policy: ON (path=${opaClient.config.policyPath}, failOpen=${opaClient.config.failOpen})`);
+  if (signozConfig) log.info(`SigNoz telemetry: ON (endpoint=${signozConfig.endpoint}, service=${signozConfig.serviceName})`);
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
@@ -128,6 +133,10 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
   function requestId(req: IncomingMessage): string {
     return headerValue(req, REQUEST_ID_HEADER) ?? newId('req');
+  }
+
+  function recordAudit(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent {
+    return recordAuditWithTelemetry(audit, telemetry, partial);
   }
 
   // Verify bearer token; on failure write the response and return null.
@@ -249,7 +258,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     
     // Check checks limit
     if (quota.checksUsed >= quota.checksLimit) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -267,7 +276,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
     // Check tokens limit
     if (quota.tokensUsed >= quota.tokensLimit) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -407,7 +416,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
     const result = tokens.issue(body.assertion, tokenAudience);
     if (!result.ok) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: result.agentId,
         role: null,
@@ -419,7 +428,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       log.deny(`token request from ${result.agentId ?? 'unknown'}: ${result.reason}`);
       return sendError(res, result.status, 'authentication_error', result.reason);
     }
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: result.agentId,
       role: result.role,
@@ -451,7 +460,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
     const can = policy.canElevate(claims.role, kind, name);
     if (!can.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: can.reason,
         meta: { reason },
@@ -463,7 +472,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const maxTtl = policy.jitMaxTtl(claims.role);
     const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : maxTtl, maxTtl);
     const { grant, claims: gc } = tokens.issueElevation(claims.sub, claims.role, { kind, name }, reason, ttl);
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'elevation.grant', resource: `${kind}:${name}`, decision: 'allow',
       reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, exp: gc.exp },
@@ -529,7 +538,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'model', model);
     if (!authz.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: authz.reason,
       });
@@ -542,7 +551,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const limits = policy.limitsForRole(claims.role);
     const rl = limiter.check(`model:${claims.sub}`, limits.requestsPerMinute);
     if (!rl.allowed) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny',
         reason: `rate limit ${limits.requestsPerMinute}/min exceeded`,
@@ -563,7 +572,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       inputVerdict = await guard.checkInput(messages);
       if (inputVerdict.flagged && guardrails.input.mode === 'block') {
         const reason = `input guardrail (${inputVerdict.provider}) blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
-        audit.record({
+        recordAudit({
           requestId: rid, agentId: claims.sub, role: claims.role,
           action: 'guardrail.block', resource: model, decision: 'deny', reason,
           meta: { stage: 'input', verdict: inputVerdict },
@@ -577,7 +586,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const riskLevelForAbac = inputVerdict?.riskLevel as RiskLevel | undefined;
     const abac = policy.decideAbac(claims.role, { now: new Date(), riskLevel: riskLevelForAbac });
     if (!abac.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: abac.reason,
         meta: { abac: true },
@@ -588,7 +597,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
     const opaDecision = await decideOpa(claims, 'model.call', 'model', model, authz.via, riskLevelForAbac);
     if (!opaDecision.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: opaDecision.reason,
         meta: { opa: true, opaInput: opaDecision.input },
@@ -621,7 +630,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       }
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'model.call', resource: model, decision: 'allow',
       reason: decision.reason, latencyMs,
@@ -654,7 +663,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'tool', name);
     if (!authz.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: authz.reason,
       });
@@ -666,7 +675,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     // ABAC (operating hours; tool calls have no model risk signal).
     const abac = policy.decideAbac(claims.role, { now: new Date() });
     if (!abac.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: abac.reason, meta: { abac: true },
       });
@@ -676,7 +685,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
     const opaDecision = await decideOpa(claims, 'tool.call', 'tool', name, authz.via);
     if (!opaDecision.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: opaDecision.reason,
         meta: { opa: true, opaInput: opaDecision.input },
@@ -689,7 +698,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     if (!tool) {
       // Policy allowed it but no implementation exists -> still deny-by-default.
       const reason = `tool "${name}" is not implemented`;
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason,
       });
@@ -699,7 +708,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const limits = policy.limitsForRole(claims.role);
     const rl = limiter.check(`tool:${claims.sub}`, limits.requestsPerMinute);
     if (!rl.allowed) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny',
         reason: `rate limit ${limits.requestsPerMinute}/min exceeded`,
@@ -711,7 +720,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const args = body.arguments ?? {};
     const validationError = tool.validate(args);
     if (validationError) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny',
         reason: `parameter validation failed: ${validationError}`,
@@ -741,7 +750,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
 
     const latencyMs = Date.now() - started;
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
@@ -800,7 +809,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
         const reason = `input guardrail blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
         
-        audit.record({
+        recordAudit({
           requestId: rid,
           agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
           role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -868,7 +877,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       incrementUsage(app.appId, 1, tokensUsed);
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
       role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -977,7 +986,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       incrementUsage(app.appId, 1, 0);
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
       role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -1061,7 +1070,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
       const reason = `input guardrail blocked: ${inputVerdict.riskLevel}`;
       
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -1145,7 +1154,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       },
     };
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: null,
       role: null,
@@ -1173,7 +1182,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     return sendJson(res, 200, response, { [REQUEST_ID_HEADER]: rid });
   }
 
-  return { server, port: cfg.port, tls: !!tls };
+  return { server, port: cfg.port, tls: !!tls, telemetry };
 }
 
 async function loadGatewaySigningKey(vault: ReturnType<typeof resolveVaultConfig>) {

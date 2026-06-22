@@ -119,6 +119,16 @@ export type OpaConfig = {
   failOpen: boolean;
 };
 
+export type SignozConfig = {
+  enabled: boolean;
+  endpoint?: string;
+  serviceName?: string;
+  ingestionKeyEnv?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  exportIntervalMs?: number;
+};
+
 export type TemporalConfig = {
   enabled: boolean;
   baseUrl: string;
@@ -141,6 +151,7 @@ export type GatewayConfig = {
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
   vault?: import('../gateway/vault-config.ts').VaultConfig;
+  signoz?: SignozConfig;
   tls?: GatewayTlsConfig;
   temporal?: TemporalConfig;
   sandbox?: {

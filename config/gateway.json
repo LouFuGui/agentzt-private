@@ -55,6 +55,15 @@
     "timeoutMs": 1000,
     "failOpen": false
   },
+  "signoz": {
+    "_comment": "Optional SigNoz OTLP/HTTP telemetry. Enable with enabled=true or AGENTZT_SIGNOZ=1. Self-hosted default endpoint is http://localhost:4318; set SIGNOZ_INGESTION_KEY for SigNoz Cloud.",
+    "enabled": false,
+    "endpoint": "http://localhost:4318",
+    "serviceName": "agentzt-gateway",
+    "ingestionKeyEnv": "SIGNOZ_INGESTION_KEY",
+    "timeoutMs": 3000,
+    "exportIntervalMs": 0
+  },
   "tls": {
     "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1).",
     "enabled": false,
