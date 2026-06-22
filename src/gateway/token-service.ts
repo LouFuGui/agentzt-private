@@ -19,6 +19,15 @@ export type TokenResult =
   | { ok: true; token: string; claims: AccessTokenClaims; agentId: string; role: string }
   | { ok: false; status: number; reason: string; agentId: string | null };
 
+export class AccessTokenError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 /**
  * OAuth2-style private_key_jwt flow:
  *  - the client signs a short-lived assertion with its agent private key,
@@ -187,13 +196,13 @@ export class TokenService {
     }
     const claims = verifyJws<AccessTokenClaims>(token, this.key.publicKey);
     const now = Math.floor(Date.now() / 1000);
-    if (claims.iss !== this.cfg.issuer) throw new Error('issuer mismatch');
-    if (claims.exp <= now) throw new Error('access token expired');
+    if (claims.iss !== this.cfg.issuer) throw new AccessTokenError('issuer mismatch', 401);
+    if (claims.exp <= now) throw new AccessTokenError('access token expired', 401);
     const identity = this.identities.get(claims.sub);
-    if (!identity) throw new Error(`unknown agent "${claims.sub}"`);
+    if (!identity) throw new AccessTokenError(`unknown agent "${claims.sub}"`, 401);
     const lifecycle = this.identities.decideAgent(claims.sub);
-    if (!lifecycle.allow) throw new Error(lifecycle.reason);
-    if (identity.entry.role !== claims.role) throw new Error(`agent "${claims.sub}" role changed`);
+    if (!lifecycle.allow) throw new AccessTokenError(lifecycle.reason, 403);
+    if (identity.entry.role !== claims.role) throw new AccessTokenError(`agent "${claims.sub}" role changed`, 403);
     return claims;
   }
 }

@@ -1,46 +1,46 @@
-# AgentZT 企业版路线图
+# AgentZT Enterprise Roadmap
 
-## 目标
+## Goal
 
-AgentZT 企业版聚焦把现有零信任网关从参考实现推进到可治理、可审计、可运营的企业控制面。基础版继续保留 deny-by-default RBAC、短期令牌、JIT、ABAC、Guardrails、Falco、OPA、Vault、SigNoz 等能力；企业版路线图把这些能力组织为统一策略模型、Agent 生命周期、集中审计和多租户治理。
+AgentZT Enterprise moves the current zero-trust gateway from a reference implementation toward a governable, auditable, and operable enterprise control plane. The current baseline remains deny-by-default RBAC, short-lived tokens, JIT, ABAC, Guardrails, Falco, OPA, Vault, and SigNoz. The enterprise roadmap organizes those controls into a unified policy model, agent lifecycle governance, centralized audit, and multi-tenant operations.
 
-## 阶段 1：企业策略模型基础
+## Phase 1: Enterprise policy model foundation
 
-- 在 `config/policy.json` 增加 `enterprise` 策略模型区块，声明决策顺序、Agent 生命周期拒绝状态和资源分类。
-- 保持现有 `roles` 作为当前执行来源，企业模型先作为治理元数据和后续控制面的稳定契约。
-- 将资源按风险分层：标准模型、只读工具、高爆炸半径工具。
-- 将 disabled/revoked Agent 作为显式生命周期状态，并在令牌签发和已有令牌使用时拒绝。
+- Add an `enterprise` policy model section to `config/policy.json` for decision order, agent lifecycle deny states, and resource classes.
+- Keep existing `roles` as the authoritative enforcement source for now; the enterprise model is a stable governance contract for future control-plane work.
+- Classify resources by blast radius: approved standing models, read-only tools, and high-blast-radius tools.
+- Treat disabled and revoked agents as explicit lifecycle states, denied both at token issuance and when previously issued tokens are presented.
 
-## 阶段 2：组织与租户治理
+## Phase 2: Organization and tenant governance
 
-- 引入组织、项目、环境维度，将 Agent、角色、资源和审计事件绑定到治理边界。
-- 支持策略继承：组织默认策略、项目覆盖、Agent 例外。
-- 支持审批流：高风险工具、跨环境访问、临时提权必须记录审批上下文。
-- 提供策略导出能力，方便接入 GRC、SIEM、SOAR 和内部审计平台。
+- Introduce organization, project, and environment boundaries for agents, roles, resources, and audit events.
+- Support policy inheritance: organization defaults, project overrides, and explicit agent exceptions.
+- Add approval workflows for high-risk tools, cross-environment access, and temporary elevation.
+- Export policy state for GRC, SIEM, SOAR, and internal audit systems.
 
-## 阶段 3：策略执行与风险自适应
+## Phase 3: Policy execution and adaptive risk
 
-- 把企业策略模型接入运行时执行路径，逐步从治理元数据升级为 PDP 输入。
-- 扩展 ABAC 条件：环境、数据分级、调用来源、风险分、运行时告警、业务时间窗。
-- 将 OPA 作为可选外部 PDP，保持本地策略先拒绝、OPA 只能追加拒绝的安全边界。
-- 增强 JIT：按资源类别、风险等级、审批原因和 TTL 统一治理。
+- Feed the enterprise policy model into runtime enforcement, gradually promoting it from governance metadata to PDP input.
+- Extend ABAC with environment, data classification, source context, risk score, runtime alerts, and operating windows.
+- Keep OPA as an optional external PDP while preserving local deny-first enforcement; OPA can only add extra denials.
+- Govern JIT consistently by resource class, risk level, approval reason, and TTL.
 
-## 阶段 4：企业审计与运营
+## Phase 4: Enterprise audit and operations
 
-- 将本地哈希链审计同步到不可变存储或 SIEM。
-- 为 token.issue、token.reject、model.call、tool.call、guardrail.block、falco.block 等事件建立统一字段规范。
-- 增加 Agent 生命周期事件：创建、禁用、吊销、角色变更、密钥轮换。
-- 增加策略变更审计：谁在何时修改了角色、资源分类、生命周期规则和 JIT 配置。
+- Replicate the local hash-chained audit log to immutable storage or a SIEM.
+- Standardize fields for `token.issue`, `token.reject`, `model.call`, `tool.call`, `guardrail.block`, `falco.block`, and related events.
+- Add lifecycle audit events for create, disable, revoke, role change, and key rotation.
+- Add policy-change audit events for role grants, resource classes, lifecycle rules, and JIT configuration.
 
-## 阶段 5：高级安全能力
+## Phase 5: Advanced security controls
 
-- 网关签名密钥接入 HSM/KMS，并支持密钥轮换。
-- Agent 身份接入证书吊销、设备姿态和运行时证明。
-- 基于审计流建立异常检测：模型调用漂移、工具使用漂移、失败率突增、JIT 频率异常。
-- 支持分环境部署基线：开发、测试、生产使用不同默认拒绝强度和审批要求。
+- Bind the gateway signing key to HSM/KMS and support key rotation.
+- Extend agent identity with certificate revocation, device posture, and runtime attestation.
+- Build anomaly detection from audit streams: model-call drift, tool-use drift, denial spikes, and abnormal JIT frequency.
+- Support environment-specific deployment baselines for development, test, and production.
 
-## 当前实现边界
+## Current implementation boundary
 
-- 当前企业策略模型是基础契约，不替代现有 `roles` 执行逻辑。
-- 当前已实现 Agent 生命周期拒绝：`disabled` 和 `revoked` 均会阻止新令牌签发；已签发令牌再次使用时也会被拒绝。
-- demo 不再作为完全兼容约束；后续可以围绕企业控制面重新设计演示流程。
+- The enterprise policy model is currently a foundation contract; it does not replace `roles` enforcement yet.
+- Agent lifecycle denial is enforced now: `disabled` and `revoked` agents cannot receive new tokens, and already-issued tokens are rejected on use.
+- The demo is no longer treated as a full compatibility constraint; future demos can be redesigned around the enterprise control plane.

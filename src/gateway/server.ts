@@ -149,6 +149,11 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     return recordAuditWithTelemetry(audit, telemetry, partial);
   }
 
+  function authErrorStatus(err: unknown): number {
+    const status = (err as { status?: unknown }).status;
+    return typeof status === 'number' ? status : 401;
+  }
+
   // Verify bearer token; on failure write the response and return null.
   function authorize(
     req: IncomingMessage,
@@ -177,7 +182,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
           reason,
         });
       }
-      sendError(res, reason.includes('disabled') || reason.includes('revoked') ? 403 : 401, 'authentication_error', reason);
+      sendError(res, authErrorStatus(err), 'authentication_error', reason);
       return null;
     }
     // Channel binding: the token may only be used over a TLS channel
@@ -251,7 +256,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
             reason,
           });
         }
-        sendError(res, reason.includes('disabled') || reason.includes('revoked') ? 403 : 401, 'authentication_error', reason);
+        sendError(res, authErrorStatus(err), 'authentication_error', reason);
         return null;
       }
     }

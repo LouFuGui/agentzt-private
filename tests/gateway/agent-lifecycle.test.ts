@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const roots: string[] = [];
@@ -10,7 +11,7 @@ function writeJson(path: string, value: unknown): void {
 }
 
 async function makeHarness(status?: 'active' | 'disabled' | 'revoked', legacyDisabled = false) {
-  const root = join(tmpdir(), `agentzt-lifecycle-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const root = join(tmpdir(), `agentzt-lifecycle-${randomUUID()}`);
   roots.push(root);
   mkdirSync(join(root, 'config'), { recursive: true });
   process.env.AGENTZT_ROOT = root;
