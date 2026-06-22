@@ -62,7 +62,7 @@ function isBlockingPriority(priority: FalcoPriority, minimum: FalcoPriority): bo
   return PRIORITY_RANK[priority] <= PRIORITY_RANK[minimum];
 }
 
-function fieldString(fields: Record<string, unknown>, names: string[]): string | null {
+function extractFieldAsString(fields: Record<string, unknown>, names: string[]): string | null {
   for (const name of names) {
     const value = fields[name];
     if (typeof value === 'string' && value) return value;
@@ -97,10 +97,11 @@ export class FalcoRuntimeMonitor {
 
   record(input: FalcoEventInput): FalcoRuntimeAlert {
     const fields = input.output_fields && typeof input.output_fields === 'object'
+      && !Array.isArray(input.output_fields)
       ? input.output_fields
       : {};
     const alert: FalcoRuntimeAlert = {
-      agentId: fieldString(fields, this.config.agentIdFields),
+      agentId: extractFieldAsString(fields, this.config.agentIdFields),
       rule: typeof input.rule === 'string' && input.rule ? input.rule : 'unknown',
       priority: normalizeFalcoPriority(input.priority),
       output: typeof input.output === 'string' ? input.output : '',

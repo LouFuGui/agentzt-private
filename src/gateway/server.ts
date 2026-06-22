@@ -571,6 +571,31 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     return falco.decideAgent(agentId);
   }
 
+  function blockFalcoIfNeeded(
+    res: ServerResponse,
+    rid: string,
+    agentId: string | null | undefined,
+    role: string | null | undefined,
+    resource: string,
+  ): boolean {
+    if (!agentId) return false;
+    const falcoDecision = decideFalco(agentId);
+    if (falcoDecision.allow) return false;
+    audit.record({
+      requestId: rid,
+      agentId,
+      role: role ?? null,
+      action: 'falco.block',
+      resource,
+      decision: 'deny',
+      reason: falcoDecision.reason,
+      meta: { falco: falcoDecision.alert },
+    });
+    log.deny(`falco.block ${agentId} -> ${resource}: ${falcoDecision.reason}`);
+    sendError(res, 403, 'permission_error', falcoDecision.reason);
+    return true;
+  }
+
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
     const claims = authorize(req, res);
     if (!claims) return;
@@ -579,16 +604,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const model = typeof body['model'] === 'string' ? (body['model'] as string) : '';
     if (!model) return sendError(res, 400, 'invalid_request', 'missing "model"');
 
-    const falcoDecision = decideFalco(claims.sub);
-    if (!falcoDecision.allow) {
-      audit.record({
-        requestId: rid, agentId: claims.sub, role: claims.role,
-        action: 'falco.block', resource: model, decision: 'deny', reason: falcoDecision.reason,
-        meta: { falco: falcoDecision.alert },
-      });
-      log.deny(`falco.block ${claims.sub} -> ${model}: ${falcoDecision.reason}`);
-      return sendError(res, 403, 'permission_error', falcoDecision.reason);
-    }
+    if (blockFalcoIfNeeded(res, rid, claims.sub, claims.role, model)) return;
 
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'model', model);
@@ -715,16 +731,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     if (!claims) return;
     const started = Date.now();
 
-    const falcoDecision = decideFalco(claims.sub);
-    if (!falcoDecision.allow) {
-      audit.record({
-        requestId: rid, agentId: claims.sub, role: claims.role,
-        action: 'falco.block', resource: name, decision: 'deny', reason: falcoDecision.reason,
-        meta: { falco: falcoDecision.alert },
-      });
-      log.deny(`falco.block ${claims.sub} -> ${name}: ${falcoDecision.reason}`);
-      return sendError(res, 403, 'permission_error', falcoDecision.reason);
-    }
+    if (blockFalcoIfNeeded(res, rid, claims.sub, claims.role, name)) return;
 
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'tool', name);
@@ -839,21 +846,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     if (!auth) return;
 
     if (auth.type === 'agent_token') {
-      const falcoDecision = decideFalco(auth.agentId ?? '');
-      if (!falcoDecision.allow) {
-        audit.record({
-          requestId: rid,
-          agentId: auth.agentId ?? null,
-          role: auth.role ?? null,
-          action: 'falco.block',
-          resource: targetPath,
-          decision: 'deny',
-          reason: falcoDecision.reason,
-          meta: { falco: falcoDecision.alert },
-        });
-        log.deny(`falco.block ${auth.agentId ?? 'unknown'} -> ${targetPath}: ${falcoDecision.reason}`);
-        return sendError(res, 403, 'permission_error', falcoDecision.reason);
-      }
+      if (blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
     }
     
     const started = Date.now();
