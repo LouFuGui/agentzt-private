@@ -272,8 +272,9 @@ export class VaultClient {
           resolve(data);
         });
       });
-      req.setTimeout(this.config.timeoutMs ?? 5000, () => {
-        const err = new Error(`Vault request timed out after ${options.timeout}ms`);
+      const timeoutMs = this.config.timeoutMs ?? 5000;
+      req.setTimeout(timeoutMs, () => {
+        const err = new Error(`Vault request timed out after ${timeoutMs}ms`);
         if (!settled) {
           settled = true;
           reject(err);

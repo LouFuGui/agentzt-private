@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { VaultClient } from '../../src/gateway/vault-client.ts';
 import { resolveVaultConfig } from '../../src/gateway/vault-config.ts';
 
@@ -19,7 +20,7 @@ describe('VaultClient', () => {
     await new Promise<void>((resolve) => server.listen(0, resolve));
 
     try {
-      const address = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
       const client = new VaultClient({
         enabled: true,
         server: { address },
