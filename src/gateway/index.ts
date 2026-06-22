@@ -3,7 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 
 const log = makeLogger('gateway');
 
-const { server, port, tls } = createGatewayServer();
+const { server, port, tls } = await createGatewayServer();
 const scheme = tls ? 'https' : 'http';
 
 server.listen(port, () => {
