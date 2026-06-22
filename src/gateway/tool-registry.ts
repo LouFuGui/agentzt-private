@@ -9,6 +9,7 @@ export type ToolContext = {
   agentId: string;
   role: string;
   requestId: string;
+  credentials?: Record<string, string>;
 };
 
 export type ToolResult = {

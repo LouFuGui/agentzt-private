@@ -36,7 +36,7 @@ import type {
   RiskLevel,
 } from '../shared/types.ts';
 import { loadGatewayConfig, loadPolicy } from '../shared/config.ts';
-import { loadOrCreateGatewayKey } from './gateway-key.ts';
+import { loadGatewayKeyFromPrivateJwk, loadOrCreateGatewayKey } from './gateway-key.ts';
 import { IdentityStore } from './identity-store.ts';
 import { PolicyEngine } from './policy-engine.ts';
 import { TokenService } from './token-service.ts';
@@ -49,6 +49,13 @@ import { OpaClient, resolveOpaConfig } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
 import { FalcoRuntimeMonitor, resolveFalcoConfig } from './falco-client.ts';
 import type { FalcoRuntimeDecision, FalcoWebhookPayload } from './falco-client.ts';
+import { resolveVaultConfig } from './vault-config.ts';
+import {
+  getGatewaySigningKeyFromVault,
+  getToolCredentialsFromVault,
+  initializeVault,
+  shutdownVault,
+} from './vault-secrets.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
 
@@ -92,11 +99,14 @@ function resolveTls(cfg: GatewayConfig): GatewayTlsConfig | null {
   return cfg.tls?.enabled ? cfg.tls : null;
 }
 
-export function createGatewayServer(): { server: Server; port: number; tls: boolean } {
+export async function createGatewayServer(): Promise<{ server: Server; port: number; tls: boolean }> {
   const cfg = loadGatewayConfig();
+  const vault = resolveVaultConfig(cfg.vault);
+  cfg.vault = vault ?? undefined;
   const policy = new PolicyEngine(loadPolicy());
   const identities = new IdentityStore();
-  const key = loadOrCreateGatewayKey();
+  await initializeVault(vault);
+  const key = await loadGatewaySigningKey(vault);
   const tokens = new TokenService(cfg, identities, policy, key);
   const limiter = new RateLimiter(60_000);
   const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
@@ -111,6 +121,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
   if (opaClient) log.info(`OPA policy: ON (path=${opaClient.config.policyPath}, failOpen=${opaClient.config.failOpen})`);
   if (falco) log.info(`Falco runtime policy: ON (webhook=${falco.config.webhookPath}, minimum=${falco.config.minimumPriority})`);
+  if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
@@ -399,6 +410,9 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
         handler,
       )
     : createServer(handler);
+  server.on('close', () => {
+    void shutdownVault();
+  });
 
   async function handleFalcoEvent(req: IncomingMessage, res: ServerResponse, rid: string) {
     if (!falco) return sendError(res, 404, 'not_found', 'Falco integration is disabled');
@@ -802,7 +816,16 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       return sendError(res, 400, 'invalid_request', validationError);
     }
 
-    let result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid });
+    let credentials: Record<string, string> | undefined;
+    if (cfg.vault?.enabled) {
+      try {
+        credentials = await getToolCredentialsFromVault(cfg.vault, name);
+      } catch (err) {
+        log.warn(`Vault credentials unavailable for tool ${name}: ${(err as Error).message}`);
+      }
+    }
+
+    let result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid, credentials });
 
     // Tool outputs are untrusted egress: redact credential-shaped strings before
     // they reach the agent (and could be fed back into a model prompt).
@@ -1249,6 +1272,21 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   }
 
   return { server, port: cfg.port, tls: !!tls };
+}
+
+async function loadGatewaySigningKey(vault: ReturnType<typeof resolveVaultConfig>) {
+  if (vault) {
+    try {
+      const privateKeyJwk = await getGatewaySigningKeyFromVault(vault);
+      if (privateKeyJwk) {
+        log.info('gateway signing key loaded from Vault');
+        return loadGatewayKeyFromPrivateJwk(privateKeyJwk);
+      }
+    } catch (err) {
+      log.warn(`Vault gateway signing key unavailable; using local key: ${(err as Error).message}`);
+    }
+  }
+  return loadOrCreateGatewayKey();
 }
 
 // ---- Anthropic Messages response helpers -----------------------------------

@@ -157,6 +157,7 @@ export type GatewayConfig = {
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
   falco?: FalcoConfig;
+  vault?: import('../gateway/vault-config.ts').VaultConfig;
   tls?: GatewayTlsConfig;
   sandbox?: {
     enabled: boolean;

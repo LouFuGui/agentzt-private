@@ -87,7 +87,8 @@ The demo exercises seven distinct controls:
 - **`config/gateway.json`** — gateway port, token TTL, and upstream mode:
   - `mock` (default) — synthetic offline responses, no API key needed.
   - `passthrough` — forwards to a real Anthropic-shaped Model API using the enterprise key
-    from the env var named in `upstream.apiKeyEnv` (the agent never sees it).
+    from Vault when enabled, otherwise the env var named in `upstream.apiKeyEnv` (the agent
+    never sees it).
 - **`config/agents.json`** — the gateway's identity registry (public keys only). Populated
   by `npm run enroll`.
 
@@ -110,6 +111,11 @@ or `x-agentzt-falco-secret` secret on webhook requests.
 
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
+
+Optional **HashiCorp Vault** integration is configured under `vault` in
+`config/gateway.json` or with `VAULT_ADDR` + `VAULT_TOKEN`. When enabled, the gateway
+initializes Vault at startup, can load its signing key from Vault, fetches passthrough model
+API keys from Vault, and passes tool-specific Vault credentials into tool execution.
 
 ### Guardrails (input/output) — powered by OpenGuardrails
 

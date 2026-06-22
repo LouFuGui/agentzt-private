@@ -31,7 +31,7 @@
    - 支持服务器、认证、自动续期、缓存设置
 
 5. **`package.json`**
-   - 添加 `node-vault` ^0.11.0 依赖
+   - 修复重复 `dependencies` 字段；Vault 客户端继续使用 Node 内置 HTTP/HTTPS，无新增运行时依赖
 
 ### Documentation
 
@@ -87,7 +87,7 @@ export VAULT_TOKEN='myroot'
 vault secrets enable -version=2 -path=secret kv
 
 # 存储 API 密钥
-vault kv put secret/agentzt/upstream-anthropic-key key="sk-ant-..."
+vault kv put secret/agentzt/upstream-anthropic-key key="<anthropic-api-key>"
 ```
 
 ### 3. 更新配置
@@ -150,7 +150,7 @@ Vault Server
 
 ```typescript
 const apiKey = await getModelApiKeyFromVault(
-  cfg.vault?.enabled ?? false,
+  cfg.vault,
   cfg.upstream.apiKeyEnv
 );
 ```
@@ -159,14 +159,14 @@ const apiKey = await getModelApiKeyFromVault(
 
 ```typescript
 const signingKey = await getGatewaySigningKeyFromVault(
-  cfg.vault?.enabled ?? false
+  cfg.vault
 );
 ```
 
 ### 3. tool-registry.ts (工具凭证)
 
 ```typescript
-const creds = await getToolCredentialsFromVault(toolName);
+const creds = await getToolCredentialsFromVault(cfg.vault, toolName);
 ```
 
 ## Files Summary
@@ -178,7 +178,7 @@ const creds = await getToolCredentialsFromVault(toolName);
 | `src/gateway/vault-config.ts` | 110 | TypeScript 类型定义 |
 | `docs/VAULT_INTEGRATION.md` | 520 | 完整文档 |
 | `config/gateway.json` | +25 | Vault 配置段 |
-| `package.json` | +1 | node-vault 依赖 |
+| `package.json` | 更新 | 修复重复 dependencies，无新增 Vault 依赖 |
 
 **总计**: 1041 行新代码 + 文档
 
@@ -226,7 +226,7 @@ curl -H "Authorization: Bearer <token>" \
 
 ## Next Steps (Future)
 
-- [ ] Vault 集成单元测试
+- [x] Vault 集成单元测试
 - [ ] 与 OPA 策略引擎集成
 - [ ] Vault CLI 命令包装
 - [ ] 健康检查端点
@@ -253,7 +253,6 @@ curl -H "Authorization: Bearer <token>" \
 ## References
 
 - [Vault 官方文档](https://www.vaultproject.io/docs)
-- [node-vault NPM 包](https://www.npmjs.com/package/node-vault)
 - [Zero Trust for AI Agents 框架](https://anthropic.com/research/zero-trust-for-ai-agents)
 - [agentzt 架构文档](docs/ARCHITECTURE.md)
 
@@ -262,7 +261,7 @@ curl -H "Authorization: Bearer <token>" \
 **审查者请注意:**
 
 1. ✅ 所有文件都使用 TypeScript (no dependencies 原则不变)
-2. ✅ node-vault 是官方推荐的客户端
+2. ✅ 使用 Node 内置 HTTP/HTTPS，保持无额外 Vault 运行时依赖
 3. ✅ 100% 向后兼容（env var fallback）
 4. ✅ 完整文档覆盖开发/生产/企业用例
 5. ✅ 支持所有主要 Vault 认证方法
