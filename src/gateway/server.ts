@@ -433,7 +433,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
         role: null,
         action: 'falco.event',
         resource: alert.rule,
-        decision: alert.agentId ? 'allow' : 'deny',
+        decision: 'allow',
         reason: alert.agentId
           ? `Falco ${alert.priority} event accepted`
           : 'Falco event accepted without agent binding',

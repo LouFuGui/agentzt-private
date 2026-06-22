@@ -4,7 +4,7 @@ import { FalcoRuntimeMonitor, normalizeFalcoPriority, resolveFalcoConfig } from 
 const config = {
   enabled: true,
   webhookPath: '/v1/falco/events',
-  sharedSecretEnv: 'AGENTZT_FALCO_WEBHOOK_SECRET',
+  sharedSecretEnv: 'AGENTZT_FALCO_SECRET',
   minimumPriority: 'warning' as const,
   denyWindowSeconds: 300,
   maxEvents: 1000,
@@ -14,7 +14,7 @@ const config = {
 describe('Falco runtime monitor', () => {
   afterEach(() => {
     delete process.env.AGENTZT_FALCO;
-    delete process.env.AGENTZT_FALCO_WEBHOOK_SECRET;
+    delete process.env.AGENTZT_FALCO_SECRET;
   });
 
   it('resolves config only when explicitly enabled', () => {
@@ -73,7 +73,7 @@ describe('Falco runtime monitor', () => {
   });
 
   it('requires the webhook secret when configured', () => {
-    process.env.AGENTZT_FALCO_WEBHOOK_SECRET = 'test-secret';
+    process.env.AGENTZT_FALCO_SECRET = 'test-secret';
     const monitor = new FalcoRuntimeMonitor(config);
     const auth = ['Bearer', 'test-secret'].join(' ');
 

@@ -59,7 +59,7 @@
     "_comment": "Optional Falco runtime security integration. Point Falco/Falcosidekick HTTP output at webhookPath. Alerts at or above minimumPriority deny matching agents for denyWindowSeconds.",
     "enabled": false,
     "webhookPath": "/v1/falco/events",
-    "sharedSecretEnv": "AGENTZT_FALCO_WEBHOOK_SECRET",
+    "sharedSecretEnv": "AGENTZT_FALCO_SECRET",
     "minimumPriority": "warning",
     "denyWindowSeconds": 300,
     "maxEvents": 1000,

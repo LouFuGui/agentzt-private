@@ -105,6 +105,8 @@ agent while a recent alert at or above `minimumPriority` is active. Bind events 
 including one of the configured `agentIdFields` (default `agentzt.agent_id`,
 `container.name`, or `k8s.pod.name`) in Falco `output_fields`.
 `maxEvents` bounds the in-memory alert cache for long-running gateways.
+Set the configured `sharedSecretEnv` (default `AGENTZT_FALCO_SECRET`) to require a bearer
+or `x-agentzt-falco-secret` secret on webhook requests.
 
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.

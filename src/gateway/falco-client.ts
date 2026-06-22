@@ -37,7 +37,7 @@ const PRIORITY_RANK: Record<FalcoPriority, number> = {
 const DEFAULT_FALCO: FalcoConfig = {
   enabled: false,
   webhookPath: '/v1/falco/events',
-  sharedSecretEnv: 'AGENTZT_FALCO_WEBHOOK_SECRET',
+  sharedSecretEnv: 'AGENTZT_FALCO_SECRET',
   minimumPriority: 'warning',
   denyWindowSeconds: 300,
   maxEvents: 1000,
@@ -123,16 +123,24 @@ export class FalcoRuntimeMonitor {
 
   decideAgent(agentId: string, now = new Date()): FalcoRuntimeDecision {
     const minTime = now.getTime() - this.config.denyWindowSeconds * 1000;
-    const match = [...this.alerts].reverse().find((alert) =>
-      alert.agentId === agentId &&
-      alert.time.getTime() >= minTime &&
-      isBlockingPriority(alert.priority, this.config.minimumPriority)
-    );
-    if (!match) return { allow: true, reason: 'no active Falco runtime alert' };
+    for (let i = this.alerts.length - 1; i >= 0; i--) {
+      const alert = this.alerts[i];
+      if (!alert) continue;
+      if (
+        alert.agentId === agentId &&
+        alert.time.getTime() >= minTime &&
+        isBlockingPriority(alert.priority, this.config.minimumPriority)
+      ) {
+        return {
+          allow: false,
+          reason: `Falco ${alert.priority} alert "${alert.rule}" is active for agent ${agentId}`,
+          alert,
+        };
+      }
+    }
     return {
-      allow: false,
-      reason: `Falco ${match.priority} alert "${match.rule}" is active for agent ${agentId}`,
-      alert: match,
+      allow: true,
+      reason: 'no active Falco runtime alert',
     };
   }
 }
