@@ -101,6 +101,23 @@ and ABAC pass; OPA can only add an extra deny. The default policy path is
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
 
+### SigNoz observability
+
+The gateway can mirror audit decisions to SigNoz over OTLP/HTTP without adding runtime
+dependencies. Enable it in `config/gateway.json` under `signoz`, or with environment
+variables:
+
+```bash
+export AGENTZT_SIGNOZ=1
+export SIGNOZ_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=agentzt-gateway
+npm run gateway
+```
+
+For SigNoz Cloud, set `SIGNOZ_OTLP_ENDPOINT` to your ingest endpoint and
+`SIGNOZ_INGESTION_KEY` to the ingestion key. Telemetry export is best-effort: failures are
+warned once and never change authorization or guardrail decisions.
+
 ### Guardrails (input/output) — powered by OpenGuardrails
 
 The gateway runs a **context-aware guardrail** on every model call (input) and response

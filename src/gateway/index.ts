@@ -3,7 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 
 const log = makeLogger('gateway');
 
-const { server, port, tls } = createGatewayServer();
+const { server, port, tls, telemetry } = createGatewayServer();
 const scheme = tls ? 'https' : 'http';
 
 server.listen(port, () => {
@@ -16,7 +16,12 @@ server.listen(port, () => {
 
 function shutdown(sig: string) {
   log.info(`received ${sig}, shutting down`);
-  server.close(() => process.exit(0));
+  server.close(() => {
+    void telemetry?.flush().finally(() => {
+      telemetry?.close();
+      process.exit(0);
+    });
+  });
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

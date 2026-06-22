@@ -48,6 +48,8 @@ import { OpaClient, resolveOpaConfig } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
+import { resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
+import type { AuditEvent } from '../shared/types.ts';
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
   provider: 'auto',
@@ -84,7 +86,7 @@ function resolveTls(cfg: GatewayConfig): GatewayTlsConfig | null {
   return cfg.tls?.enabled ? cfg.tls : null;
 }
 
-export function createGatewayServer(): { server: Server; port: number; tls: boolean } {
+export function createGatewayServer(): { server: Server; port: number; tls: boolean; telemetry: SigNozTelemetry | null } {
   const cfg = loadGatewayConfig();
   const policy = new PolicyEngine(loadPolicy());
   const identities = new IdentityStore();
@@ -95,12 +97,15 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
   const guard = createGuardrailProvider(guardrails);
   const opaClient = createOpaClient(cfg.opa);
+  const signozConfig = resolveSignozConfig(cfg.signoz);
+  const telemetry = signozConfig ? new SigNozTelemetry(signozConfig, log) : null;
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
   if (opaClient) log.info(`OPA policy: ON (path=${opaClient.config.policyPath}, failOpen=${opaClient.config.failOpen})`);
+  if (signozConfig) log.info(`SigNoz telemetry: ON (endpoint=${signozConfig.endpoint}, service=${signozConfig.serviceName})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
@@ -117,6 +122,12 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
 
   function requestId(req: IncomingMessage): string {
     return headerValue(req, REQUEST_ID_HEADER) ?? newId('req');
+  }
+
+  function recordAudit(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent {
+    const event = audit.record(partial);
+    telemetry?.recordAudit(event);
+    return event;
   }
 
   // Verify bearer token; on failure write the response and return null.
@@ -238,7 +249,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     
     // Check checks limit
     if (quota.checksUsed >= quota.checksLimit) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -256,7 +267,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
 
     // Check tokens limit
     if (quota.tokensUsed >= quota.tokensLimit) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -393,7 +404,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     }
     const result = tokens.issue(body.assertion, tokenAudience);
     if (!result.ok) {
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: result.agentId,
         role: null,
@@ -405,7 +416,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       log.deny(`token request from ${result.agentId ?? 'unknown'}: ${result.reason}`);
       return sendError(res, result.status, 'authentication_error', result.reason);
     }
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: result.agentId,
       role: result.role,
@@ -437,7 +448,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
 
     const can = policy.canElevate(claims.role, kind, name);
     if (!can.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: can.reason,
         meta: { reason },
@@ -449,7 +460,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const maxTtl = policy.jitMaxTtl(claims.role);
     const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : maxTtl, maxTtl);
     const { grant, claims: gc } = tokens.issueElevation(claims.sub, claims.role, { kind, name }, reason, ttl);
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'elevation.grant', resource: `${kind}:${name}`, decision: 'allow',
       reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, exp: gc.exp },
@@ -515,7 +526,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'model', model);
     if (!authz.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: authz.reason,
       });
@@ -528,7 +539,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const limits = policy.limitsForRole(claims.role);
     const rl = limiter.check(`model:${claims.sub}`, limits.requestsPerMinute);
     if (!rl.allowed) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny',
         reason: `rate limit ${limits.requestsPerMinute}/min exceeded`,
@@ -549,7 +560,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       inputVerdict = await guard.checkInput(messages);
       if (inputVerdict.flagged && guardrails.input.mode === 'block') {
         const reason = `input guardrail (${inputVerdict.provider}) blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
-        audit.record({
+        recordAudit({
           requestId: rid, agentId: claims.sub, role: claims.role,
           action: 'guardrail.block', resource: model, decision: 'deny', reason,
           meta: { stage: 'input', verdict: inputVerdict },
@@ -563,7 +574,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const riskLevelForAbac = inputVerdict?.riskLevel as RiskLevel | undefined;
     const abac = policy.decideAbac(claims.role, { now: new Date(), riskLevel: riskLevelForAbac });
     if (!abac.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: abac.reason,
         meta: { abac: true },
@@ -574,7 +585,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
 
     const opaDecision = await decideOpa(claims, 'model.call', 'model', model, authz.via, riskLevelForAbac);
     if (!opaDecision.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: opaDecision.reason,
         meta: { opa: true, opaInput: opaDecision.input },
@@ -607,7 +618,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       }
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'model.call', resource: model, decision: 'allow',
       reason: decision.reason, latencyMs,
@@ -640,7 +651,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     // Authorize: standing scope or JIT elevation.
     const authz = authorizeResource(req, claims, 'tool', name);
     if (!authz.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: authz.reason,
       });
@@ -652,7 +663,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     // ABAC (operating hours; tool calls have no model risk signal).
     const abac = policy.decideAbac(claims.role, { now: new Date() });
     if (!abac.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: abac.reason, meta: { abac: true },
       });
@@ -662,7 +673,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
 
     const opaDecision = await decideOpa(claims, 'tool.call', 'tool', name, authz.via);
     if (!opaDecision.allow) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: opaDecision.reason,
         meta: { opa: true, opaInput: opaDecision.input },
@@ -675,7 +686,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     if (!tool) {
       // Policy allowed it but no implementation exists -> still deny-by-default.
       const reason = `tool "${name}" is not implemented`;
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason,
       });
@@ -685,7 +696,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const limits = policy.limitsForRole(claims.role);
     const rl = limiter.check(`tool:${claims.sub}`, limits.requestsPerMinute);
     if (!rl.allowed) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny',
         reason: `rate limit ${limits.requestsPerMinute}/min exceeded`,
@@ -697,7 +708,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     const args = body.arguments ?? {};
     const validationError = tool.validate(args);
     if (validationError) {
-      audit.record({
+      recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny',
         reason: `parameter validation failed: ${validationError}`,
@@ -718,7 +729,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     }
 
     const latencyMs = Date.now() - started;
-    audit.record({
+    recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
@@ -777,7 +788,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
         const reason = `input guardrail blocked: ${inputVerdict.riskLevel} [${inputVerdict.categories.join(', ')}]`;
         
-        audit.record({
+        recordAudit({
           requestId: rid,
           agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
           role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -845,7 +856,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       incrementUsage(app.appId, 1, tokensUsed);
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
       role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -954,7 +965,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       incrementUsage(app.appId, 1, 0);
     }
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: auth.type === 'agent_token' ? (auth.agentId ?? null) : null,
       role: auth.type === 'agent_token' ? (auth.role ?? null) : null,
@@ -1038,7 +1049,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     if (inputVerdict.flagged && guardConfig.input.mode === 'block') {
       const reason = `input guardrail blocked: ${inputVerdict.riskLevel}`;
       
-      audit.record({
+      recordAudit({
         requestId: rid,
         agentId: null,
         role: null,
@@ -1122,7 +1133,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       },
     };
 
-    audit.record({
+    recordAudit({
       requestId: rid,
       agentId: null,
       role: null,
@@ -1150,7 +1161,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     return sendJson(res, 200, response, { [REQUEST_ID_HEADER]: rid });
   }
 
-  return { server, port: cfg.port, tls: !!tls };
+  return { server, port: cfg.port, tls: !!tls, telemetry };
 }
 
 // ---- Anthropic Messages response helpers -----------------------------------

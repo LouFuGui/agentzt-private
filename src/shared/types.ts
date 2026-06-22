@@ -119,6 +119,16 @@ export type OpaConfig = {
   failOpen: boolean;
 };
 
+export type SignozConfig = {
+  enabled: boolean;
+  endpoint?: string;
+  serviceName?: string;
+  ingestionKeyEnv?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  exportIntervalMs?: number;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -131,6 +141,7 @@ export type GatewayConfig = {
   };
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
+  signoz?: SignozConfig;
   tls?: GatewayTlsConfig;
   sandbox?: {
     enabled: boolean;
