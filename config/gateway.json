@@ -55,15 +55,14 @@
     "timeoutMs": 1000,
     "failOpen": false
   },
-  "falco": {
-    "_comment": "Optional Falco runtime security integration. Point Falco/Falcosidekick HTTP output at webhookPath. Alerts at or above minimumPriority deny matching agents for denyWindowSeconds.",
+  "signoz": {
+    "_comment": "Optional SigNoz OTLP/HTTP telemetry. Enable with enabled=true or AGENTZT_SIGNOZ=1. Self-hosted default endpoint is http://localhost:4318; set SIGNOZ_INGESTION_KEY for SigNoz Cloud.",
     "enabled": false,
-    "webhookPath": "/v1/falco/events",
-    "sharedSecretEnv": "AGENTZT_FALCO_SECRET",
-    "minimumPriority": "warning",
-    "denyWindowSeconds": 300,
-    "maxEvents": 1000,
-    "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"]
+    "endpoint": "http://localhost:4318",
+    "serviceName": "agentzt-gateway",
+    "ingestionKeyEnv": "SIGNOZ_INGESTION_KEY",
+    "timeoutMs": 3000,
+    "exportIntervalMs": 0
   },
   "tls": {
     "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1).",
@@ -78,5 +77,24 @@
     "enabled": true,
     "baseUrl": "http://localhost:8080",
     "autoStart": true
+  },
+  "temporal": {
+    "_comment": "Temporal REST API integration for durable workflows. Agents can call temporal.workflow.start|signal|query only when RBAC explicitly grants those tools. apiKeyEnv is read only by the gateway.",
+    "enabled": false,
+    "baseUrl": "http://localhost:7243/api/v1",
+    "namespace": "default",
+    "defaultTaskQueue": "agentzt-tasks",
+    "timeoutMs": 5000,
+    "apiKeyEnv": "TEMPORAL_API_KEY"
+  },
+  "falco": {
+    "_comment": "Optional Falco runtime security integration. Point Falco/Falcosidekick HTTP output at webhookPath. Alerts at or above minimumPriority deny matching agents for denyWindowSeconds.",
+    "enabled": false,
+    "webhookPath": "/v1/falco/events",
+    "sharedSecretEnv": "AGENTZT_FALCO_SECRET",
+    "minimumPriority": "warning",
+    "denyWindowSeconds": 300,
+    "maxEvents": 1000,
+    "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"]
   }
 }

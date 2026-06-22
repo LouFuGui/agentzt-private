@@ -99,6 +99,44 @@ and ABAC pass; OPA can only add an extra deny. The default policy path is
 `agentzt/authz/decision`, returning either a boolean `result` or
 `{ "allow": boolean, "reason": string }`.
 
+Optional **Temporal** workflow orchestration is configured under `temporal` in
+`config/gateway.json`. It is disabled by default and uses Temporal's REST API through
+Node's built-in `fetch`, so no Temporal SDK dependency or build step is required. Enable it,
+point `baseUrl` at your Temporal REST endpoint, set `TEMPORAL_API_KEY` when your endpoint
+requires a bearer token, and enroll an agent with the `workflow-agent` role to grant:
+
+- `temporal.workflow.start` — start a workflow with `workflowType`, optional `workflowId`,
+  optional `taskQueue`, and JSON `input`.
+- `temporal.workflow.signal` — signal a workflow with `workflowId`, `signalName`, optional
+  `runId`, and JSON `input`.
+- `temporal.workflow.query` — query a workflow with `workflowId`, `queryType`, optional
+  `runId`, and JSON `input`.
+
+Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
+and is gitignored.
+
+### SigNoz observability
+
+The gateway can mirror audit decisions to SigNoz over OTLP/HTTP without adding runtime
+dependencies. Enable it in `config/gateway.json` under `signoz`, or with environment
+variables:
+
+```bash
+export AGENTZT_SIGNOZ=1
+export SIGNOZ_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_SERVICE_NAME=agentzt-gateway
+npm run gateway
+```
+
+For SigNoz Cloud, set `SIGNOZ_OTLP_ENDPOINT` to your ingest endpoint and
+`SIGNOZ_INGESTION_KEY` to the ingestion key. Telemetry export is best-effort: failures are
+warned once and never change authorization or guardrail decisions.
+
+Optional **HashiCorp Vault** integration is configured under `vault` in
+`config/gateway.json` or with `VAULT_ADDR` + `VAULT_TOKEN`. When enabled, the gateway
+initializes Vault at startup, can load its signing key from Vault, fetches passthrough model
+API keys from Vault, and passes tool-specific Vault credentials into tool execution.
+
 Optional **Falco** runtime enforcement is configured under `falco` in `config/gateway.json`
 (or enabled with `AGENTZT_FALCO=1`). Point Falco/Falcosidekick HTTP output at
 `/v1/falco/events`; the gateway records events and denies future calls from a matching
@@ -108,14 +146,6 @@ including one of the configured `agentIdFields` (default `agentzt.agent_id`,
 `maxEvents` bounds the in-memory alert cache for long-running gateways.
 Set the configured `sharedSecretEnv` (default `AGENTZT_FALCO_SECRET`) to require a bearer
 or `x-agentzt-falco-secret` secret on webhook requests.
-
-Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
-and is gitignored.
-
-Optional **HashiCorp Vault** integration is configured under `vault` in
-`config/gateway.json` or with `VAULT_ADDR` + `VAULT_TOKEN`. When enabled, the gateway
-initializes Vault at startup, can load its signing key from Vault, fetches passthrough model
-API keys from Vault, and passes tool-specific Vault credentials into tool execution.
 
 ### Guardrails (input/output) — powered by OpenGuardrails
 
