@@ -27,7 +27,7 @@ export type ToolDef = {
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
 
-function stringValidationError(v: unknown, key: string, max: number): string | null {
+function validateStringParameter(v: unknown, key: string, max: number): string | null {
   if (typeof v !== 'string') return `parameter "${key}" must be a string`;
   if (v.length === 0) return `parameter "${key}" must not be empty`;
   if (v.length > max) return `parameter "${key}" exceeds ${max} chars`;
@@ -36,13 +36,13 @@ function stringValidationError(v: unknown, key: string, max: number): string | n
 
 function requireString(args: Record<string, unknown>, key: string, max = 4096): string | null {
   const v = args[key];
-  return stringValidationError(v, key, max);
+  return validateStringParameter(v, key, max);
 }
 
 function optionalString(args: Record<string, unknown>, key: string, max = 4096): string | null {
   const v = args[key];
   if (v === undefined) return null;
-  return stringValidationError(v, key, max);
+  return validateStringParameter(v, key, max);
 }
 
 function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 1024): string | null {
