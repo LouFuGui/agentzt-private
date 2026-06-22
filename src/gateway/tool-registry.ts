@@ -45,14 +45,15 @@ function optionalString(args: Record<string, unknown>, key: string, max = 4096):
 }
 
 function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 1024): string | null {
-  if (args[key] === undefined) return null;
+  const input = args[key];
+  if (input === undefined) return null;
+  if (typeof input === 'function' || typeof input === 'symbol') return `parameter "${key}" must be JSON-serializable`;
   let value: string | undefined;
   try {
-    value = JSON.stringify(args[key]);
+    value = JSON.stringify(input);
   } catch {
     return `parameter "${key}" must be JSON-serializable`;
   }
-  if (typeof value !== 'string') return `parameter "${key}" must be JSON-serializable`;
   if (value.length > max) return `parameter "${key}" exceeds ${max} JSON chars`;
   return null;
 }

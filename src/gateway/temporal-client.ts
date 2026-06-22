@@ -29,6 +29,8 @@ export type TemporalQueryWorkflowArgs = {
   input?: unknown;
 };
 
+export const TEMPORAL_JSON_ENCODING = 'json/plain';
+
 type TemporalPayloads = {
   payloads: Array<{
     metadata: { encoding: string };
@@ -53,7 +55,7 @@ function temporalPayloads(input: unknown): TemporalPayloads | undefined {
   if (input === undefined) return undefined;
   return {
     payloads: [{
-      metadata: { encoding: Buffer.from('json/plain').toString('base64') },
+      metadata: { encoding: Buffer.from(TEMPORAL_JSON_ENCODING).toString('base64') },
       data: Buffer.from(JSON.stringify(input)).toString('base64'),
     }],
   };
@@ -76,7 +78,7 @@ export class TemporalClient {
 
   async startWorkflow(args: TemporalStartWorkflowArgs): Promise<TemporalApiResult> {
     const body: Record<string, unknown> = {
-      workflow_id: args.workflowId ?? `workflow_${randomUUID()}`,
+      workflow_id: args.workflowId ?? `agentzt_wf_${randomUUID()}`,
       workflow_type: { name: args.workflowType },
       task_queue: { name: args.taskQueue ?? this.config.defaultTaskQueue },
     };

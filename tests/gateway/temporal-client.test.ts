@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { TemporalClient, resolveTemporalConfig } from '../../src/gateway/temporal-client.ts';
+import {
+  TEMPORAL_JSON_ENCODING,
+  TemporalClient,
+  resolveTemporalConfig,
+} from '../../src/gateway/temporal-client.ts';
 
 describe('TemporalClient', () => {
   afterEach(() => {
@@ -55,7 +59,7 @@ describe('TemporalClient', () => {
     expect(body.workflow_id).toBe('wf_123');
     expect(body.workflow_type).toEqual({ name: 'RiskReviewWorkflow' });
     expect(body.task_queue).toEqual({ name: 'agentzt' });
-    expect(body.input.payloads[0].metadata.encoding).toBe(Buffer.from('json/plain').toString('base64'));
+    expect(body.input.payloads[0].metadata.encoding).toBe(Buffer.from(TEMPORAL_JSON_ENCODING).toString('base64'));
     expect(JSON.parse(Buffer.from(body.input.payloads[0].data, 'base64').toString('utf8'))).toEqual({ requestId: 'req_123' });
   });
 
