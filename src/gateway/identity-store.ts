@@ -11,6 +11,7 @@ export type ResolvedIdentity = {
 // Migration precedence: explicit revocation wins, then disabled, then active.
 // `disabled` is the legacy boolean; `status` is the enterprise lifecycle field.
 export function agentLifecycleStatus(entry: AgentRegistryEntry): AgentLifecycleStatus {
+  // Revocation is terminal: it wins even if an older disabled flag remains.
   if (entry.revokedAt || entry.status === 'revoked') return 'revoked';
   if (entry.disabled || entry.status === 'disabled') return 'disabled';
   return 'active';

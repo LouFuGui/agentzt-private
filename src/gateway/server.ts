@@ -14,7 +14,7 @@ import {
   APP_ID_HEADER,
   API_KEY_HEADER,
 } from '../shared/http.ts';
-import { newId } from '../shared/crypto.ts';
+import { decodeJwsPayload, newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
 import { AuditLogger } from '../shared/audit.ts';
 import { AUDIT_DIR, TLS_DIR } from '../shared/paths.ts';
@@ -149,9 +149,17 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     return recordAuditWithTelemetry(audit, telemetry, partial);
   }
 
-  function authErrorStatus(err: unknown): number {
+  function extractAuthErrorStatus(err: unknown): number {
     const status = (err as { status?: unknown }).status;
     return typeof status === 'number' ? status : 401;
+  }
+
+  function unverifiedAccessClaims(token: string): AccessTokenClaims | null {
+    try {
+      return decodeJwsPayload<AccessTokenClaims>(token);
+    } catch {
+      return null;
+    }
   }
 
   // Verify bearer token; on failure write the response and return null.
@@ -171,18 +179,19 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       claims = tokens.verifyAccessToken(token);
     } catch (err) {
       const reason = (err as Error).message;
+      const rejectedClaims = unverifiedAccessClaims(token);
       if (rid) {
         recordAudit({
           requestId: rid,
-          agentId: null,
-          role: null,
+          agentId: rejectedClaims?.sub ?? null,
+          role: rejectedClaims?.role ?? null,
           action: 'token.reject',
           resource,
           decision: 'deny',
           reason,
         });
       }
-      sendError(res, authErrorStatus(err), 'authentication_error', reason);
+      sendError(res, extractAuthErrorStatus(err), 'authentication_error', reason);
       return null;
     }
     // Channel binding: the token may only be used over a TLS channel
@@ -245,18 +254,19 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         };
       } catch (err) {
         const reason = (err as Error).message;
+        const rejectedClaims = unverifiedAccessClaims(token);
         if (rid) {
           recordAudit({
             requestId: rid,
-            agentId: null,
-            role: null,
+            agentId: rejectedClaims?.sub ?? null,
+            role: rejectedClaims?.role ?? null,
             action: 'token.reject',
             resource,
             decision: 'deny',
             reason,
           });
         }
-        sendError(res, authErrorStatus(err), 'authentication_error', reason);
+        sendError(res, extractAuthErrorStatus(err), 'authentication_error', reason);
         return null;
       }
     }

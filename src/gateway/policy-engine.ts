@@ -14,6 +14,8 @@ const RISK_ORDINAL: Record<string, number> = {
   high_risk: 3,
 };
 
+const RESOURCE_WILDCARD = '*';
+
 const DEFAULT_ENTERPRISE_DECISION_ORDER = [
   'mtls',
   'token',
@@ -78,7 +80,7 @@ export class PolicyEngine {
   }
 
   private static listAllows(list: string[], resource: string): boolean {
-    return list.includes('*') || list.includes(resource);
+    return list.includes(RESOURCE_WILDCARD) || list.includes(resource);
   }
 
   decideModel(role: string, model: string): Decision {
@@ -152,7 +154,7 @@ export class PolicyEngine {
     const jit = this.policy.roles[role]?.jit;
     if (!jit) return { allow: false, reason: `role "${role}" has no JIT policy` };
     const list = kind === 'model' ? jit.elevatableModels ?? [] : jit.elevatableTools ?? [];
-    if (list.includes('*') || list.includes(name)) {
+    if (list.includes(RESOURCE_WILDCARD) || list.includes(name)) {
       return { allow: true, reason: `role "${role}" may elevate to ${kind} "${name}"` };
     }
     return { allow: false, reason: `role "${role}" may not elevate to ${kind} "${name}"` };

@@ -79,7 +79,7 @@ export class TokenService {
 
       const identity = this.identities.get(agentId);
       if (!identity) {
-        return { ok: false, status: 401, reason: `unknown agent "${agentId}"`, agentId };
+        return { ok: false, status: 401, reason: `agent "${agentId}" not found in identity store`, agentId };
       }
       const lifecycle = this.identities.decideAgent(agentId);
       if (!lifecycle.allow) {
@@ -199,7 +199,7 @@ export class TokenService {
     if (claims.iss !== this.cfg.issuer) throw new AccessTokenError('issuer mismatch', 401);
     if (claims.exp <= now) throw new AccessTokenError('access token expired', 401);
     const identity = this.identities.get(claims.sub);
-    if (!identity) throw new AccessTokenError(`unknown agent "${claims.sub}"`, 401);
+    if (!identity) throw new AccessTokenError(`agent "${claims.sub}" not found in identity store`, 401);
     const lifecycle = this.identities.decideAgent(claims.sub);
     if (!lifecycle.allow) throw new AccessTokenError(lifecycle.reason, 403);
     if (identity.entry.role !== claims.role) throw new AccessTokenError(`agent "${claims.sub}" role changed`, 403);
