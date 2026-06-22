@@ -26,7 +26,7 @@ export type ToolDef = {
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
 
-function validateString(v: unknown, key: string, max: number): string | null {
+function stringValidationError(v: unknown, key: string, max: number): string | null {
   if (typeof v !== 'string') return `parameter "${key}" must be a string`;
   if (v.length === 0) return `parameter "${key}" must not be empty`;
   if (v.length > max) return `parameter "${key}" exceeds ${max} chars`;
@@ -35,19 +35,21 @@ function validateString(v: unknown, key: string, max: number): string | null {
 
 function requireString(args: Record<string, unknown>, key: string, max = 4096): string | null {
   const v = args[key];
-  return validateString(v, key, max);
+  return stringValidationError(v, key, max);
 }
 
 function optionalString(args: Record<string, unknown>, key: string, max = 4096): string | null {
   const v = args[key];
   if (v === undefined) return null;
-  return validateString(v, key, max);
+  return stringValidationError(v, key, max);
 }
 
 function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 1024): string | null {
   const input = args[key];
   if (input === undefined) return null;
-  if (typeof input === 'function' || typeof input === 'symbol') return `parameter "${key}" must be JSON-serializable`;
+  if (typeof input === 'function' || typeof input === 'symbol' || typeof input === 'bigint') {
+    return `parameter "${key}" must be JSON-serializable`;
+  }
   let value: string | undefined;
   try {
     value = JSON.stringify(input);
