@@ -29,6 +29,13 @@ export type TemporalQueryWorkflowArgs = {
   input?: unknown;
 };
 
+type TemporalPayloads = {
+  payloads: Array<{
+    metadata: { encoding: string };
+    data: string;
+  }>;
+};
+
 export const DEFAULT_TEMPORAL_CONFIG: TemporalConfig = {
   enabled: false,
   baseUrl: 'http://localhost:7243/api/v1',
@@ -42,7 +49,7 @@ function trimSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function temporalPayloads(input: unknown): { payloads: Array<{ metadata: { encoding: string }; data: string }> } | undefined {
+function temporalPayloads(input: unknown): TemporalPayloads | undefined {
   if (input === undefined) return undefined;
   return {
     payloads: [{

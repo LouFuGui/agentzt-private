@@ -26,21 +26,22 @@ export type ToolDef = {
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
 
-function requireString(args: Record<string, unknown>, key: string, max = 4096): string | null {
-  const v = args[key];
+function validateString(v: unknown, key: string, max: number): string | null {
   if (typeof v !== 'string') return `parameter "${key}" must be a string`;
   if (v.length === 0) return `parameter "${key}" must not be empty`;
   if (v.length > max) return `parameter "${key}" exceeds ${max} chars`;
   return null;
 }
 
+function requireString(args: Record<string, unknown>, key: string, max = 4096): string | null {
+  const v = args[key];
+  return validateString(v, key, max);
+}
+
 function optionalString(args: Record<string, unknown>, key: string, max = 4096): string | null {
   const v = args[key];
   if (v === undefined) return null;
-  if (typeof v !== 'string') return `parameter "${key}" must be a string`;
-  if (v.length === 0) return `parameter "${key}" must not be empty`;
-  if (v.length > max) return `parameter "${key}" exceeds ${max} chars`;
-  return null;
+  return validateString(v, key, max);
 }
 
 function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 1024): string | null {
@@ -51,7 +52,7 @@ function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 10
   } catch {
     return `parameter "${key}" must be JSON-serializable`;
   }
-  if (value === undefined) return `parameter "${key}" must be JSON-serializable`;
+  if (typeof value !== 'string') return `parameter "${key}" must be JSON-serializable`;
   if (value.length > max) return `parameter "${key}" exceeds ${max} JSON chars`;
   return null;
 }

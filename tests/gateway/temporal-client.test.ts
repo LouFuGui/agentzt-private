@@ -21,7 +21,10 @@ describe('TemporalClient', () => {
 
   it('starts a workflow with namespace, task queue, input, and gateway-held token', async () => {
     vi.stubEnv('TEMPORAL_API_KEY', 'temporal-test-token');
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 'run_123' }), { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ run_id: 'run_123' }),
+      { status: 200 },
+    ));
     vi.stubGlobal('fetch', fetchMock);
 
     const client = new TemporalClient({
