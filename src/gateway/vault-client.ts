@@ -1,147 +1,134 @@
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { readFileSync } from 'node:fs';
+import type { RequestOptions } from 'node:https';
 import type {
   VaultConfig,
-  VaultAuth,
   VaultSecretPaths,
   VaultTokenAuth,
   VaultAppRoleAuth,
   VaultKubernetesAuth,
 } from './vault-config.ts';
-import { DEFAULT_VAULT_PATHS, DEFAULT_VAULT_CONFIG } from './vault-config.ts';
+import { DEFAULT_VAULT_PATHS } from './vault-config.ts';
 import { makeLogger } from '../shared/log.ts';
 
 const log = makeLogger('vault');
 
-export interface SecretData {
-  [key: string]: string | number | boolean;
-}
+export type SecretData = Record<string, string | number | boolean | JsonWebKey>;
 
-export interface VaultSecret {
+export type VaultSecret = {
   leaseId: string;
   leaseDuration: number;
   renewable: boolean;
   data: SecretData;
-}
+};
 
-export interface DatabaseCredentials {
+export type DatabaseCredentials = {
   username: string;
   password: string;
   leaseId?: string;
   leaseDuration?: number;
-}
+};
 
-/**
- * Vault client for retrieving and managing secrets.
- * Supports multiple auth methods, caching, and auto-renewal.
- */
+type VaultResponse = {
+  auth?: {
+    client_token?: string;
+    lease_duration?: number;
+    renewable?: boolean;
+  };
+  lease_id?: string;
+  lease_duration?: number;
+  renewable?: boolean;
+  data?: Record<string, unknown>;
+  errors?: string[];
+  error?: string;
+};
+
 export class VaultClient {
   private config: VaultConfig;
   private secretPaths: VaultSecretPaths;
-  private token: string = '';
-  private tokenExpiry: number = 0;
-  private secretCache: Map<string, { secret: VaultSecret; expiry: number }> = new Map();
-  private leaseIds: Set<string> = new Set();
+  private token = '';
+  private tokenExpiry = 0;
+  private secretCache = new Map<string, { secret: VaultSecret; expiry: number }>();
+  private leaseIds = new Set<string>();
   private renewalIntervalId?: NodeJS.Timeout;
 
   constructor(config: VaultConfig) {
     this.config = { ...config };
-    this.secretPaths = config.secrets ?? DEFAULT_VAULT_PATHS;
-    
-    // Validate configuration
-    if (!this.config.server?.address) {
-      throw new Error('Vault address is required');
-    }
-    if (!this.config.auth) {
-      throw new Error('Vault auth method is required');
-    }
+    this.secretPaths = { ...DEFAULT_VAULT_PATHS, ...config.secrets };
+    if (!this.config.server.address) throw new Error('Vault address is required');
   }
 
-  /**
-   * Initialize the Vault client: authenticate and setup auto-renewal.
-   */
   async init(): Promise<void> {
     try {
-      // Authenticate to Vault
       await this.authenticate();
-      log.info(`✓ Vault authenticated (address: ${this.config.server.address})`);
-
-      // Start auto-renewal if configured
-      if (this.config.autoRenew?.enabled) {
-        this.startAutoRenewal();
-      }
+      log.info(`Vault authenticated (address: ${this.config.server.address})`);
+      if (this.config.autoRenew?.enabled) this.startAutoRenewal();
     } catch (err) {
       const msg = `Failed to initialize Vault: ${(err as Error).message}`;
       log.error(msg);
-      if (!this.config.failOpen) {
-        throw new Error(msg);
-      }
+      if (!this.config.failOpen) throw new Error(msg);
       log.warn('failOpen=true, continuing without Vault');
     }
   }
 
-  /**
-   * Authenticate to Vault using the configured auth method.
-   */
   private async authenticate(): Promise<void> {
     const auth = this.config.auth;
-    let token: string;
-
     if (auth.method === 'token') {
-      const ta = auth as VaultTokenAuth;
-      token = ta.token;
-    } else if (auth.method === 'approle') {
-      const aa = auth as VaultAppRoleAuth;
-      const resp = await this.request('POST', `/v1/auth/${aa.mount ?? 'approle'}/login`, {
-        role_id: aa.roleId,
-        secret_id: aa.secretId,
-      });
-      token = resp.auth.client_token;
-      this.tokenExpiry = Math.floor(Date.now() / 1000) + resp.auth.lease_duration;
-    } else if (auth.method === 'kubernetes') {
-      const ka = auth as VaultKubernetesAuth;
-      const resp = await this.request('POST', `/v1/auth/${ka.mount ?? 'kubernetes'}/login`, {
-        role: ka.role,
-        jwt: ka.jwt,
-      });
-      token = resp.auth.client_token;
-      this.tokenExpiry = Math.floor(Date.now() / 1000) + resp.auth.lease_duration;
-    } else {
-      throw new Error(`Unknown auth method: ${(auth as any).method}`);
+      const token = (auth as VaultTokenAuth).token;
+      if (!token) throw new Error('Vault token is empty');
+      this.token = token;
+      return;
     }
 
-    this.token = token;
+    if (auth.method === 'approle') {
+      const appRole = auth as VaultAppRoleAuth;
+      const resp = await this.request('POST', `/v1/auth/${appRole.mount ?? 'approle'}/login`, {
+        role_id: appRole.roleId,
+        secret_id: appRole.secretId,
+      }, false);
+      this.setTokenFromAuth(resp);
+      return;
+    }
+
+    if (auth.method === 'kubernetes') {
+      const kubernetes = auth as VaultKubernetesAuth;
+      const resp = await this.request('POST', `/v1/auth/${kubernetes.mount ?? 'kubernetes'}/login`, {
+        role: kubernetes.role,
+        jwt: kubernetes.jwt,
+      }, false);
+      this.setTokenFromAuth(resp);
+      return;
+    }
+
+    throw new Error(`Unknown Vault auth method: ${(auth as { method?: string }).method}`);
   }
 
-  /**
-   * Retrieve the Model API key from Vault.
-   */
+  private setTokenFromAuth(resp: VaultResponse): void {
+    const token = resp.auth?.client_token;
+    if (!token) throw new Error('Vault login response did not include a client token');
+    this.token = token;
+    const ttl = resp.auth?.lease_duration ?? 0;
+    if (ttl > 0) this.tokenExpiry = Math.floor(Date.now() / 1000) + ttl;
+  }
+
   async getModelApiKey(): Promise<string> {
     const secret = await this.readSecret(this.secretPaths.modelApiKey);
-    const key = secret.data['key'] || secret.data['api_key'] || secret.data['anthropic_key'];
-    if (!key) {
-      throw new Error('Model API key not found in Vault secret');
-    }
+    const key = secret.data['key'] ?? secret.data['api_key'] ?? secret.data['anthropic_key'];
+    if (!key) throw new Error('Model API key not found in Vault secret');
     return String(key);
   }
 
-  /**
-   * Retrieve tool credentials from Vault.
-   * Path: secret/data/agentzt/tools/{toolName}
-   */
   async getToolCredentials(toolName: string): Promise<SecretData> {
-    const path = `${this.secretPaths.toolsPrefix}/${toolName}`;
-    const secret = await this.readSecret(path);
+    if (toolName.includes('/')) throw new Error('Vault tool credential names must not contain "/"');
+    const secret = await this.readSecret(`${this.secretPaths.toolsPrefix}/${encodeURIComponent(toolName)}`);
     return secret.data;
   }
 
-  /**
-   * Retrieve the gateway signing key (JWK format).
-   */
   async getGatewaySigningKey(): Promise<JsonWebKey> {
     const secret = await this.readSecret(this.secretPaths.gatewaySigningKey);
-    const key = secret.data['privateKeyJwk'] || secret.data['key'];
-    if (!key) {
-      throw new Error('Gateway signing key not found in Vault secret');
-    }
+    const key = secret.data['privateKeyJwk'] ?? secret.data['key'];
+    if (!key) throw new Error('Gateway signing key not found in Vault secret');
     if (typeof key === 'string') {
       try {
         return JSON.parse(key) as JsonWebKey;
@@ -149,169 +136,162 @@ export class VaultClient {
         throw new Error(`Gateway signing key in Vault must be valid JWK JSON: ${(err as Error).message}`);
       }
     }
-    return key as JsonWebKey;
+    if (typeof key === 'object') return key as JsonWebKey;
+    throw new Error('Gateway signing key in Vault must be a JWK object or JSON string');
   }
 
-  /**
-   * Retrieve dynamic database credentials.
-   * Vault automatically generates and manages the lifecycle.
-   */
   async getDatabaseCredentials(roleName: string): Promise<DatabaseCredentials> {
-    const path = `${this.secretPaths.databasePrefix}/${roleName}`;
-    const secret = await this.readSecret(path);
-    
-    if (secret.leaseId) {
-      this.leaseIds.add(secret.leaseId);
-    }
-
+    const secret = await this.readSecret(`${this.secretPaths.databasePrefix}/${roleName}`);
+    if (secret.leaseId) this.leaseIds.add(secret.leaseId);
     const username = secret.data['username'];
     const password = secret.data['password'];
     if (username == null || password == null) {
       throw new Error(`Database credentials not found in Vault secret for role "${roleName}"`);
     }
-
     return {
       username: String(username),
       password: String(password),
-      leaseId: secret.leaseId,
-      leaseDuration: secret.leaseDuration,
+      leaseId: secret.leaseId || undefined,
+      leaseDuration: secret.leaseDuration || undefined,
     };
   }
 
-  /**
-   * Read a secret from Vault (with caching support).
-   */
   private async readSecret(path: string): Promise<VaultSecret> {
-    // Check cache first
-    if (this.config.cache?.enabled) {
-      const cached = this.secretCache.get(path);
-      if (cached && cached.expiry > Date.now()) {
-        return cached.secret;
-      }
-      this.secretCache.delete(path);
-    }
+    const cached = this.config.cache?.enabled ? this.secretCache.get(path) : undefined;
+    if (cached && cached.expiry > Date.now()) return cached.secret;
+    if (cached) this.secretCache.delete(path);
 
-    // Fetch from Vault
     const resp = await this.request('GET', `/v1/${path}`);
     const secret: VaultSecret = {
-      leaseId: resp.lease_id || '',
-      leaseDuration: resp.lease_duration || 0,
+      leaseId: resp.lease_id ?? '',
+      leaseDuration: resp.lease_duration ?? 0,
       renewable: resp.renewable ?? false,
-      data: resp.data?.data || resp.data,
+      data: unwrapKvData(resp.data),
     };
 
-    // Cache the secret (including lease metadata)
     if (this.config.cache?.enabled) {
-      const ttl = this.config.cache.ttlMs ?? 300000;
-      this.secretCache.set(path, { secret, expiry: Date.now() + ttl });
+      const configuredTtl = this.config.cache.ttlMs ?? 300000;
+      const leaseTtl = secret.leaseDuration > 0
+        ? Math.max(1000, Math.floor(secret.leaseDuration * 1000 * 0.8))
+        : configuredTtl;
+      this.secretCache.set(path, { secret, expiry: Date.now() + Math.min(configuredTtl, leaseTtl) });
     }
     return secret;
   }
 
-  /**
-   * Renew a lease (for long-lived credentials).
-   */
   async renewLease(leaseId: string): Promise<void> {
     try {
-      await this.request('PUT', `/v1/sys/leases/renew`, { lease_id: leaseId });
-      log.debug(`✓ Renewed lease ${leaseId.slice(0, 20)}...`);
+      await this.request('PUT', '/v1/sys/leases/renew', { lease_id: leaseId });
+      log.info(`Renewed Vault lease ${leaseId.slice(0, 20)}...`);
     } catch (err) {
-      log.warn(`Failed to renew lease: ${(err as Error).message}`);
+      log.warn(`Failed to renew Vault lease: ${(err as Error).message}`);
     }
   }
 
-  /**
-   * Revoke a lease (cleanup).
-   */
   async revokeLease(leaseId: string): Promise<void> {
     try {
-      await this.request('PUT', `/v1/sys/leases/revoke`, { lease_id: leaseId });
+      await this.request('PUT', '/v1/sys/leases/revoke', { lease_id: leaseId });
       this.leaseIds.delete(leaseId);
-      log.debug(`✓ Revoked lease ${leaseId.slice(0, 20)}...`);
+      log.info(`Revoked Vault lease ${leaseId.slice(0, 20)}...`);
     } catch (err) {
-      log.warn(`Failed to revoke lease: ${(err as Error).message}`);
+      log.warn(`Failed to revoke Vault lease: ${(err as Error).message}`);
     }
   }
 
-  /**
-   * Start automatic lease renewal.
-   */
   private startAutoRenewal(): void {
     const interval = this.config.autoRenew?.intervalMs ?? 3600000;
     this.renewalIntervalId = setInterval(async () => {
-      const leases = Array.from(this.leaseIds);
-      for (const leaseId of leases) {
-        await this.renewLease(leaseId);
+      if (this.tokenExpiry > 0 && this.tokenExpiry - Math.floor(Date.now() / 1000) < interval / 1000) {
+        await this.renewSelfToken();
       }
+      for (const leaseId of Array.from(this.leaseIds)) await this.renewLease(leaseId);
     }, interval);
-    log.info(`✓ Auto-renewal started (interval: ${interval}ms)`);
+    this.renewalIntervalId.unref();
+    log.info(`Vault auto-renewal started (interval: ${interval}ms)`);
   }
 
-  /**
-   * Cleanup: revoke all managed leases.
-   */
+  private async renewSelfToken(): Promise<void> {
+    try {
+      const resp = await this.request('POST', '/v1/auth/token/renew-self');
+      const ttl = resp.auth?.lease_duration ?? 0;
+      if (ttl > 0) this.tokenExpiry = Math.floor(Date.now() / 1000) + ttl;
+      log.info('Renewed Vault client token');
+    } catch (err) {
+      log.warn(`Failed to renew Vault client token: ${(err as Error).message}`);
+    }
+  }
+
   async shutdown(): Promise<void> {
-    // Stop auto-renewal
-    if (this.renewalIntervalId) {
-      clearInterval(this.renewalIntervalId);
-    }
-
-    // Revoke all leases
+    if (this.renewalIntervalId) clearInterval(this.renewalIntervalId);
     if (this.config.leaseManagement?.revokeOnShutdown) {
-      const leases = Array.from(this.leaseIds);
-      for (const leaseId of leases) {
-        await this.revokeLease(leaseId);
-      }
+      for (const leaseId of Array.from(this.leaseIds)) await this.revokeLease(leaseId);
     }
-
     this.secretCache.clear();
-    log.info('✓ Vault client shutdown');
+    log.info('Vault client shutdown');
   }
 
-  /**
-   * Make an HTTP request to Vault.
-   */
   private async request(
     method: string,
     path: string,
     body?: Record<string, unknown>,
-  ): Promise<any> {
+    includeToken = true,
+  ): Promise<VaultResponse> {
     const url = new URL(path, this.config.server.address);
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      'X-Vault-Token': this.token,
+    const payload = body ? Buffer.from(JSON.stringify(body)) : undefined;
+    const headers: Record<string, string | number> = { 'Content-Type': 'application/json' };
+    if (includeToken && this.token) headers['X-Vault-Token'] = this.token;
+    if (this.config.server.namespace) headers['X-Vault-Namespace'] = this.config.server.namespace;
+    if (payload) headers['Content-Length'] = payload.length;
+
+    const options: RequestOptions = {
+      method,
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      headers,
+      timeout: this.config.timeoutMs ?? 5000,
+      ...tlsOptions(this.config),
     };
 
-    if (this.config.server.namespace) {
-      headers['X-Vault-Namespace'] = this.config.server.namespace;
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 5000);
-
-    try {
-      const resp = await fetch(url.toString(), {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+    const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    return await new Promise<VaultResponse>((resolve, reject) => {
+      let settled = false;
+      const req = transport(options, (resp) => {
+        const chunks: Buffer[] = [];
+        resp.on('data', (chunk: Buffer) => chunks.push(chunk));
+        resp.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          const data = text ? JSON.parse(text) as VaultResponse : {};
+          const statusCode = resp.statusCode ?? 500;
+          if (statusCode < 200 || statusCode >= 300) {
+            settled = true;
+            reject(new Error(`Vault error: ${resp.statusCode} ${data.errors?.join(', ') ?? data.error ?? ''}`.trim()));
+            return;
+          }
+          settled = true;
+          resolve(data);
+        });
       });
-
-      const data = await resp.json();
-
-      if (!resp.ok) {
-        throw new Error(`Vault error: ${resp.status} ${data.errors?.join(', ') || data.error || ''}`);
-      }
-
-      return data;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+      const timeoutMs = this.config.timeoutMs ?? 5000;
+      req.setTimeout(timeoutMs, () => {
+        const err = new Error(`Vault request timed out after ${timeoutMs}ms`);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+        req.destroy(err);
+      });
+      req.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      });
+      if (payload) req.write(payload);
+      req.end();
+    });
   }
 
-  /**
-   * Health check: is Vault accessible?
-   */
   async healthCheck(): Promise<boolean> {
     try {
       await this.request('GET', '/v1/sys/health');
@@ -322,9 +302,33 @@ export class VaultClient {
   }
 }
 
-/**
- * Create and initialize a Vault client from config.
- */
+function unwrapKvData(data: Record<string, unknown> | undefined): SecretData {
+  const raw = data?.['data'];
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : data;
+  const out: SecretData = {};
+  for (const [key, entry] of Object.entries(value ?? {})) {
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+      out[key] = entry;
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      out[key] = entry as JsonWebKey;
+    }
+  }
+  return out;
+}
+
+function tlsOptions(config: VaultConfig): RequestOptions {
+  const tls = config.server.tls;
+  if (!tls) return {};
+  if (tls.skip_verify) {
+    throw new Error('Vault TLS certificate verification cannot be disabled');
+  }
+  return {
+    ca: tls.ca_cert ? readFileSync(tls.ca_cert) : undefined,
+    cert: tls.client_cert ? readFileSync(tls.client_cert) : undefined,
+    key: tls.client_key ? readFileSync(tls.client_key) : undefined,
+  };
+}
+
 export async function createVaultClient(config: VaultConfig): Promise<VaultClient> {
   const client = new VaultClient(config);
   await client.init();

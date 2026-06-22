@@ -23,11 +23,11 @@ export function generateEd25519(): Ed25519KeyPair {
 }
 
 export function publicKeyFromJwk(jwk: JsonWebKey): KeyObject {
-  return createPublicKey({ key: jwk as object, format: 'jwk' });
+  return createPublicKey({ key: jwk, format: 'jwk' });
 }
 
 export function privateKeyFromJwk(jwk: JsonWebKey): KeyObject {
-  return createPrivateKey({ key: jwk as object, format: 'jwk' });
+  return createPrivateKey({ key: jwk, format: 'jwk' });
 }
 
 // ---- Compact JWS (EdDSA / Ed25519) ----------------------------------------

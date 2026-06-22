@@ -129,6 +129,15 @@ export type SignozConfig = {
   exportIntervalMs?: number;
 };
 
+export type TemporalConfig = {
+  enabled: boolean;
+  baseUrl: string;
+  namespace: string;
+  defaultTaskQueue: string;
+  timeoutMs: number;
+  apiKeyEnv?: string;
+};
+
 export type GatewayConfig = {
   port: number;
   issuer: string;
@@ -141,8 +150,10 @@ export type GatewayConfig = {
   };
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
+  vault?: import('../gateway/vault-config.ts').VaultConfig;
   signoz?: SignozConfig;
   tls?: GatewayTlsConfig;
+  temporal?: TemporalConfig;
   sandbox?: {
     enabled: boolean;
     baseUrl: string;

@@ -77,5 +77,14 @@
     "enabled": true,
     "baseUrl": "http://localhost:8080",
     "autoStart": true
+  },
+  "temporal": {
+    "_comment": "Temporal REST API integration for durable workflows. Agents can call temporal.workflow.start|signal|query only when RBAC explicitly grants those tools. apiKeyEnv is read only by the gateway.",
+    "enabled": false,
+    "baseUrl": "http://localhost:7243/api/v1",
+    "namespace": "default",
+    "defaultTaskQueue": "agentzt-tasks",
+    "timeoutMs": 5000,
+    "apiKeyEnv": "TEMPORAL_API_KEY"
   }
 }

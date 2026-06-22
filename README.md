@@ -87,7 +87,8 @@ The demo exercises seven distinct controls:
 - **`config/gateway.json`** — gateway port, token TTL, and upstream mode:
   - `mock` (default) — synthetic offline responses, no API key needed.
   - `passthrough` — forwards to a real Anthropic-shaped Model API using the enterprise key
-    from the env var named in `upstream.apiKeyEnv` (the agent never sees it).
+    from Vault when enabled, otherwise the env var named in `upstream.apiKeyEnv` (the agent
+    never sees it).
 - **`config/agents.json`** — the gateway's identity registry (public keys only). Populated
   by `npm run enroll`.
 
@@ -97,6 +98,19 @@ the call context to OPA's `/v1/data/{policyPath}` endpoint after local RBAC/JIT,
 and ABAC pass; OPA can only add an extra deny. The default policy path is
 `agentzt/authz/decision`, returning either a boolean `result` or
 `{ "allow": boolean, "reason": string }`.
+
+Optional **Temporal** workflow orchestration is configured under `temporal` in
+`config/gateway.json`. It is disabled by default and uses Temporal's REST API through
+Node's built-in `fetch`, so no Temporal SDK dependency or build step is required. Enable it,
+point `baseUrl` at your Temporal REST endpoint, set `TEMPORAL_API_KEY` when your endpoint
+requires a bearer token, and enroll an agent with the `workflow-agent` role to grant:
+
+- `temporal.workflow.start` — start a workflow with `workflowType`, optional `workflowId`,
+  optional `taskQueue`, and JSON `input`.
+- `temporal.workflow.signal` — signal a workflow with `workflowId`, `signalName`, optional
+  `runId`, and JSON `input`.
+- `temporal.workflow.query` — query a workflow with `workflowId`, `queryType`, optional
+  `runId`, and JSON `input`.
 
 Runtime state (private keys, the gateway signing key, audit logs) lives under `.agentzt/`
 and is gitignored.
@@ -117,6 +131,11 @@ npm run gateway
 For SigNoz Cloud, set `SIGNOZ_OTLP_ENDPOINT` to your ingest endpoint and
 `SIGNOZ_INGESTION_KEY` to the ingestion key. Telemetry export is best-effort: failures are
 warned once and never change authorization or guardrail decisions.
+
+Optional **HashiCorp Vault** integration is configured under `vault` in
+`config/gateway.json` or with `VAULT_ADDR` + `VAULT_TOKEN`. When enabled, the gateway
+initializes Vault at startup, can load its signing key from Vault, fetches passthrough model
+API keys from Vault, and passes tool-specific Vault credentials into tool execution.
 
 ### Guardrails (input/output) — powered by OpenGuardrails
 

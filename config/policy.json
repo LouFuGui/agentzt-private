@@ -40,6 +40,12 @@
         "elevatableTools": ["email.send"],
         "maxTtlSeconds": 300
       }
+    },
+    "workflow-agent": {
+      "description": "Durable workflow operator. May start, signal, and query Temporal workflows through the gateway; high-blast-radius tools still require separate policy grants.",
+      "models": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+      "tools": ["kb.search", "temporal.workflow.start", "temporal.workflow.signal", "temporal.workflow.query"],
+      "limits": { "maxOutputTokens": 2048, "requestsPerMinute": 30 }
     }
   }
 }
