@@ -63,6 +63,7 @@ describe('OPA client', () => {
         failOpen: false,
       });
       await expect(client.decide(input)).resolves.toEqual({ allow: false, reason: 'OPA denied' });
+      expect(opa.seen[0].path).toBe('/v1/data/agentzt/authz/allow');
     } finally {
       opa.close();
     }

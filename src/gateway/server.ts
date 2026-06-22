@@ -100,7 +100,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
-  if (opaClient) log.info(`OPA policy: ON (${opaClient.url}, failOpen=${opaClient.config.failOpen})`);
+  if (opaClient) log.info(`OPA policy: ON (path=${opaClient.config.policyPath}, failOpen=${opaClient.config.failOpen})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
