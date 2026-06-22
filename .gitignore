@@ -2,6 +2,7 @@
 .agentzt/
 node_modules/
 *.log
+test-users-[0-9]*.json
 
 # Anthropic's copyrighted eBook — not redistributed in this repo
 Claude-eBook-Zero-Trust-for-AI-Agents-05182026.pdf

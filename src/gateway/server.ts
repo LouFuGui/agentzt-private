@@ -22,6 +22,7 @@ import { resolve } from 'node:path';
 import type {
   GatewayTlsConfig,
   GatewayConfig,
+  OpaConfig,
   AccessTokenClaims,
   GuardrailConfig,
   AuthResult,
@@ -43,6 +44,8 @@ import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
 import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
+import { OpaClient, resolveOpaConfig } from './opa-client.ts';
+import type { OpaDecisionInput } from './opa-client.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
 
@@ -60,6 +63,11 @@ const DEFAULT_GUARDRAILS: GuardrailConfig = {
 };
 
 const log = makeLogger('gateway');
+
+function createOpaClient(config?: OpaConfig): OpaClient | null {
+  const resolved = resolveOpaConfig(config);
+  return resolved ? new OpaClient(resolved) : null;
+}
 
 // TLS is enabled by config (cfg.tls.enabled) or the AGENTZT_TLS=1 env override
 // (used by the mTLS demo/tests with default .agentzt/tls/ paths).
@@ -86,11 +94,13 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
   const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
   const guardrails = cfg.guardrails ?? DEFAULT_GUARDRAILS;
   const guard = createGuardrailProvider(guardrails);
+  const opa = createOpaClient(cfg.opa);
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
   log.info(`upstream model mode: ${cfg.upstream.mode}`);
   log.info(`guardrail provider: ${guard.name} (input=${guardrails.input.mode}, output.redact=${guardrails.output.redactSecrets})`);
+  if (opa) log.info(`OPA policy: ON (${opa.url}, failOpen=${opa.config.failOpen})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
@@ -472,6 +482,28 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
     return { allow: false, reason: !inScope ? `${kind} "${name}" not in scope (no JIT elevation)` : base.reason, via: 'scope' };
   }
 
+  async function decideOpa(
+    claims: AccessTokenClaims,
+    action: 'model.call' | 'tool.call',
+    kind: 'model' | 'tool',
+    name: string,
+    authVia: 'scope' | 'jit',
+    riskLevel?: RiskLevel,
+  ): Promise<{ allow: true; reason: string; input?: OpaDecisionInput } | { allow: false; reason: string; input?: OpaDecisionInput }> {
+    if (!opa) return { allow: true, reason: 'OPA disabled' };
+    const input: OpaDecisionInput = {
+      agentId: claims.sub,
+      role: claims.role,
+      action,
+      resource: { kind, name },
+      authVia,
+      riskLevel,
+      now: new Date().toISOString(),
+    };
+    const decision = await opa.decide(input);
+    return { ...decision, input };
+  }
+
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
     const claims = authorize(req, res);
     if (!claims) return;
@@ -540,6 +572,17 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       return sendError(res, 403, 'permission_error', abac.reason);
     }
 
+    const opaDecision = await decideOpa(claims, 'model.call', 'model', model, authz.via, riskLevelForAbac);
+    if (!opaDecision.allow) {
+      audit.record({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'model.call', resource: model, decision: 'deny', reason: opaDecision.reason,
+        meta: { opa: true, opaInput: opaDecision.input },
+      });
+      log.deny(`model.call ${claims.sub} -> ${model}: ${opaDecision.reason}`);
+      return sendError(res, 403, 'permission_error', opaDecision.reason);
+    }
+
     const result = await callModel(cfg, { model, body });
     const latencyMs = Date.now() - started;
 
@@ -577,6 +620,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
         inputVerdict,
         outputVerdict,
         outputRedactions: outRedactions,
+        opa: opa ? { reason: opaDecision.reason } : undefined,
       },
     });
     const flags = [
@@ -614,6 +658,17 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       });
       log.deny(`tool.call ${claims.sub} -> ${name}: ${abac.reason}`);
       return sendError(res, 403, 'permission_error', abac.reason);
+    }
+
+    const opaDecision = await decideOpa(claims, 'tool.call', 'tool', name, authz.via);
+    if (!opaDecision.allow) {
+      audit.record({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'tool.call', resource: name, decision: 'deny', reason: opaDecision.reason,
+        meta: { opa: true, opaInput: opaDecision.input },
+      });
+      log.deny(`tool.call ${claims.sub} -> ${name}: ${opaDecision.reason}`);
+      return sendError(res, 403, 'permission_error', opaDecision.reason);
     }
 
     const tool = getTool(name);
@@ -667,7 +722,7 @@ export function createGatewayServer(): { server: Server; port: number; tls: bool
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
-      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via },
+      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via, opa: opa ? { reason: opaDecision.reason } : undefined },
     });
     log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
     return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });

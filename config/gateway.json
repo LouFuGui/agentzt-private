@@ -16,7 +16,7 @@
       "_comment": "method: token (dev), approle (prod), kubernetes (cloud-native)",
       "method": "token",
       "token": ""
-    }
+    },
     "autoRenew": {
       "enabled": true,
       "intervalMs": 3600000
@@ -46,6 +46,14 @@
       "timeoutMs": 5000,
       "failOpen": false
     }
+  },
+  "opa": {
+    "_comment": "Optional Open Policy Agent sidecar integration. When enabled (or AGENTZT_OPA=1), the gateway POSTs {input} to /v1/data/{policyPath}. OPA can only add an extra deny after local deny-by-default RBAC/JIT and ABAC pass.",
+    "enabled": false,
+    "baseUrl": "http://localhost:8181",
+    "policyPath": "agentzt/authz/decision",
+    "timeoutMs": 1000,
+    "failOpen": false
   },
   "tls": {
     "_comment": "Mutual TLS, opt-in (disabled by default so the zero-setup HTTP demo works). Run `agentzt tls init` to create the CA + server cert, then set enabled=true (or start the gateway with AGENTZT_TLS=1).",
