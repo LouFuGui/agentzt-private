@@ -387,28 +387,33 @@ export class AuthApi {
   /**
    * Route auth requests to appropriate handler.
    */
-  async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
     if (method === 'POST' && path === '/api/auth/register') {
-      return this.handleRegister(req, res);
+      await this.handleRegister(req, res);
+      return true;
     }
     if (method === 'POST' && path === '/api/auth/login') {
-      return this.handleLogin(req, res);
+      await this.handleLogin(req, res);
+      return true;
     }
     if (method === 'POST' && path === '/api/auth/refresh') {
-      return this.handleRefresh(req, res);
+      await this.handleRefresh(req, res);
+      return true;
     }
     if (method === 'POST' && path === '/api/auth/logout') {
-      return this.handleLogout(req, res);
+      await this.handleLogout(req, res);
+      return true;
     }
     if (method === 'GET' && path === '/api/auth/me') {
-      return this.handleMe(req, res);
+      await this.handleMe(req, res);
+      return true;
     }
 
-    return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
+    return false;
   }
 }
 
