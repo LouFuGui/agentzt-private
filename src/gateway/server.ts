@@ -146,7 +146,10 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   function recordAudit(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent {
-    return recordAuditWithTelemetry(audit, telemetry, partial);
+    const entry = partial.agentId ? identities.get(partial.agentId)?.entry : undefined;
+    const governance = partial.governance
+      ?? (entry ? policy.governanceForAgent(entry) : undefined);
+    return recordAuditWithTelemetry(audit, telemetry, { ...partial, governance });
   }
 
   function extractAuthErrorStatus(err: unknown): number {
@@ -250,6 +253,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
           type: 'agent_token',
           agentId: claims.sub,
           role: claims.role,
+          governance: claims.governance,
           scope: claims.scope,
         };
       } catch (err) {

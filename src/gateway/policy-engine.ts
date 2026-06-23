@@ -1,6 +1,8 @@
 import type {
+  AgentRegistryEntry,
   EnterprisePolicyModel,
   EnterpriseResourceClass,
+  GovernanceBoundary,
   PolicyDoc,
   RolePolicy,
   Decision,
@@ -38,6 +40,28 @@ function defaultEnterprisePolicy(): EnterprisePolicyModel {
   };
 }
 
+function cleanBoundary(boundary?: GovernanceBoundary): GovernanceBoundary | undefined {
+  if (!boundary) return undefined;
+  const clean: GovernanceBoundary = {};
+  if (boundary.organizationId) clean.organizationId = boundary.organizationId;
+  if (boundary.projectId) clean.projectId = boundary.projectId;
+  if (boundary.environment) clean.environment = boundary.environment;
+  return Object.keys(clean).length ? clean : undefined;
+}
+
+function boundaryMismatch(required: GovernanceBoundary, actual?: GovernanceBoundary): string | null {
+  if (required.organizationId && required.organizationId !== actual?.organizationId) {
+    return `organization "${actual?.organizationId ?? 'unassigned'}" does not match "${required.organizationId}"`;
+  }
+  if (required.projectId && required.projectId !== actual?.projectId) {
+    return `project "${actual?.projectId ?? 'unassigned'}" does not match "${required.projectId}"`;
+  }
+  if (required.environment && required.environment !== actual?.environment) {
+    return `environment "${actual?.environment ?? 'unassigned'}" does not match "${required.environment}"`;
+  }
+  return null;
+}
+
 /**
  * Deny-by-default RBAC policy engine (Foundation tier "least agency").
  *
@@ -70,6 +94,25 @@ export class PolicyEngine {
       }
     }
     return null;
+  }
+
+  governanceForAgent(entry: AgentRegistryEntry): GovernanceBoundary | undefined {
+    return cleanBoundary(entry.governance);
+  }
+
+  decideGovernance(entry: AgentRegistryEntry): Decision {
+    const role = this.policy.roles[entry.role];
+    if (!role) return { allow: false, reason: `role "${entry.role}" has no policy` };
+
+    const required = cleanBoundary(role.governance);
+    if (!required) return { allow: true, reason: 'no role governance boundary' };
+
+    const actual = cleanBoundary(entry.governance);
+    const mismatch = boundaryMismatch(required, actual);
+    if (mismatch) {
+      return { allow: false, reason: `governance boundary mismatch: ${mismatch}` };
+    }
+    return { allow: true, reason: 'governance boundary satisfied' };
   }
 
   /** Models/tools an agent in this role may use — used to scope its token. */

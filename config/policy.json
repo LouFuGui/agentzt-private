@@ -20,21 +20,39 @@
       "execution",
       "output_guardrail"
     ],
+    "governance": {
+      "organizationIds": ["openguardrails"],
+      "projectIds": ["agentzt"],
+      "environments": ["development", "test", "production"]
+    },
     "resourceClasses": {
       "standard-models": {
         "description": "Approved standing model API access.",
         "kind": "model",
-        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6"]
+        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt"
+        }
       },
       "read-only-tools": {
         "description": "Low-blast-radius read-only tools suitable for standing scope.",
         "kind": "tool",
-        "resources": ["kb.search", "db.query", "web.fetch", "temporal.workflow.query"]
+        "resources": ["kb.search", "db.query", "web.fetch", "temporal.workflow.query"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt"
+        }
       },
       "high-blast-radius-tools": {
         "description": "Actions that should require explicit JIT or custom enterprise approval.",
         "kind": "tool",
         "resources": ["email.send", "temporal.workflow.start", "temporal.workflow.signal"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt",
+          "environment": "production"
+        },
         "jitRequired": true
       }
     }

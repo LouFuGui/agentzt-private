@@ -10,6 +10,7 @@ import type {
   ClientAssertionClaims,
   ElevationGrantClaims,
   GatewayConfig,
+  GovernanceBoundary,
 } from '../shared/types.ts';
 import type { IdentityStore } from './identity-store.ts';
 import type { PolicyEngine } from './policy-engine.ts';
@@ -26,6 +27,14 @@ export class AccessTokenError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function boundaryKey(boundary?: GovernanceBoundary): string {
+  return JSON.stringify({
+    organizationId: boundary?.organizationId,
+    projectId: boundary?.projectId,
+    environment: boundary?.environment,
+  });
 }
 
 /**
@@ -116,12 +125,17 @@ export class TokenService {
       if (!this.policy.getRole(role)) {
         return { ok: false, status: 403, reason: `role "${role}" has no policy`, agentId };
       }
+      const governance = this.policy.decideGovernance(identity.entry);
+      if (!governance.allow) {
+        return { ok: false, status: 403, reason: governance.reason, agentId };
+      }
 
       const scope = this.policy.scopeForRole(role);
       const accessClaims: AccessTokenClaims = {
         iss: this.cfg.issuer,
         sub: agentId,
         role,
+        governance: this.policy.governanceForAgent(identity.entry),
         scope,
         iat: now,
         exp: now + this.cfg.tokenTtlSeconds,
@@ -151,10 +165,12 @@ export class TokenService {
     ttlSeconds: number,
   ): { grant: string; claims: ElevationGrantClaims } {
     const now = Math.floor(Date.now() / 1000);
+    const identity = this.identities.get(agentId);
     const claims: ElevationGrantClaims = {
       iss: this.cfg.issuer,
       sub: agentId,
       role,
+      governance: identity ? this.policy.governanceForAgent(identity.entry) : undefined,
       resource,
       reason,
       iat: now,
@@ -203,6 +219,12 @@ export class TokenService {
     const lifecycle = this.identities.decideAgent(claims.sub);
     if (!lifecycle.allow) throw new AccessTokenError(lifecycle.reason, 403);
     if (identity.entry.role !== claims.role) throw new AccessTokenError(`agent "${claims.sub}" role changed`, 403);
+    const governance = this.policy.decideGovernance(identity.entry);
+    if (!governance.allow) throw new AccessTokenError(governance.reason, 403);
+    const currentBoundary = this.policy.governanceForAgent(identity.entry);
+    if (boundaryKey(currentBoundary) !== boundaryKey(claims.governance)) {
+      throw new AccessTokenError(`agent "${claims.sub}" governance boundary changed`, 403);
+    }
     return claims;
   }
 }

@@ -10,7 +10,14 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 
-async function makeHarness(status?: 'active' | 'disabled' | 'revoked', legacyDisabled = false) {
+async function makeHarness(
+  status?: 'active' | 'disabled' | 'revoked',
+  legacyDisabled = false,
+  governance?: {
+    agent?: { organizationId?: string; projectId?: string; environment?: string };
+    role?: { organizationId?: string; projectId?: string; environment?: string };
+  },
+) {
   const root = join(tmpdir(), `agentzt-lifecycle-${randomUUID()}`);
   roots.push(root);
   mkdirSync(join(root, 'config'), { recursive: true });
@@ -59,6 +66,7 @@ async function makeHarness(status?: 'active' | 'disabled' | 'revoked', legacyDis
       [role]: {
         models: ['claude-sonnet-4-6'],
         tools: ['kb.search'],
+        governance: governance?.role,
         limits: { requestsPerMinute: 60 },
       },
     },
@@ -70,6 +78,7 @@ async function makeHarness(status?: 'active' | 'disabled' | 'revoked', legacyDis
       agentId,
       role,
       publicKeyJwk: agentKeys.publicKeyJwk,
+      governance: governance?.agent,
       status,
       disabled: legacyDisabled || undefined,
       revokedAt: status === 'revoked' ? new Date().toISOString() : undefined,
@@ -146,5 +155,43 @@ describe('agent lifecycle enforcement', () => {
     expect(engine.enterprisePolicy().agentLifecycle.denyStatuses).toContain('revoked');
     expect(engine.resourceClassFor('tool', 'email.send')?.jitRequired).toBe(true);
     expect(engine.resourceClassFor('model', 'claude-sonnet-4-6')).toBeNull();
+  });
+
+  it('denies token issuance when agent and role governance boundaries differ', async () => {
+    const { identity, tokens } = await makeHarness('active', false, {
+      agent: { organizationId: 'org-a', projectId: 'payments', environment: 'production' },
+      role: { organizationId: 'org-a', projectId: 'support', environment: 'production' },
+    });
+    const result = tokens.issue(identity.makeAssertion('agentzt-gateway/v1/token'), 'agentzt-gateway/v1/token');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(403);
+      expect(result.reason).toContain('governance boundary mismatch');
+    }
+  });
+
+  it('embeds governance boundaries in access tokens and rejects changed boundaries', async () => {
+    const governance = {
+      agent: { organizationId: 'org-a', projectId: 'payments', environment: 'test' },
+      role: { organizationId: 'org-a', projectId: 'payments', environment: 'test' },
+    };
+    const { agentId, identity, identities, publicKeyJwk, root, tokens } = await makeHarness('active', false, governance);
+    const issued = tokens.issue(identity.makeAssertion('agentzt-gateway/v1/token'), 'agentzt-gateway/v1/token');
+    expect(issued.ok).toBe(true);
+    if (!issued.ok) throw new Error(issued.reason);
+    expect(issued.claims.governance).toEqual(governance.agent);
+
+    writeJson(join(root, 'config', 'agents.json'), {
+      agents: [{
+        agentId,
+        role: 'demo-agent',
+        publicKeyJwk,
+        governance: { organizationId: 'org-a', projectId: 'payments', environment: 'production' },
+        status: 'active',
+      }],
+    });
+    identities.reload();
+
+    expect(() => tokens.verifyAccessToken(issued.token)).toThrow('governance boundary mismatch');
   });
 });
