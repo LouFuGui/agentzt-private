@@ -149,13 +149,12 @@ export function validateApiKeyAndGetApp(apiKey: string): App | null {
 }
 
 /**
- * Check if user is admin (placeholder)
+ * Check if user is admin via AGENTZT_ADMIN_USER_IDS env var.
  */
 function isAdmin(userId: string): boolean {
-  const adminUserIds = (process.env.AGENTZT_ADMIN_USER_IDS ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
+  const env = process.env.AGENTZT_ADMIN_USER_IDS?.trim();
+  if (!env) return false;
+  const adminUserIds = env.split(',').map((id) => id.trim()).filter(Boolean);
   return adminUserIds.includes(userId);
 }
 

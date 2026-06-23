@@ -82,10 +82,9 @@ function extractUserId(req: IncomingMessage): string | null {
  * Check if user is admin via AGENTZT_ADMIN_USER_IDS env var.
  */
 function isAdmin(userId: string): boolean {
-  const adminIds = (process.env.AGENTZT_ADMIN_USER_IDS ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
+  const env = process.env.AGENTZT_ADMIN_USER_IDS?.trim();
+  if (!env) return false;
+  const adminIds = env.split(',').map((id) => id.trim()).filter(Boolean);
   return adminIds.includes(userId);
 }
 
