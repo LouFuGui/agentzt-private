@@ -21,6 +21,15 @@ type AuthContext = {
   role: UserRole;
 };
 
+type AuditFilters = {
+  agentId?: string;
+  role?: string;
+  action?: string;
+  resource?: string;
+  decision?: string;
+  projectId?: string;
+};
+
 const ROLE_RANK: Record<UserRole, number> = {
   owner: 3,
   admin: 2,
@@ -85,11 +94,14 @@ function managementParts(req: IncomingMessage): string[] {
   return parts;
 }
 
-function auditEvents(limit: number): AuditEvent[] {
+function auditEvents(limit: number, filters: AuditFilters = {}): AuditEvent[] {
   const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
   if (!existsSync(file)) return [];
   const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
-  return lines.slice(-limit).map((line) => JSON.parse(line) as AuditEvent);
+  return lines
+    .map((line) => JSON.parse(line) as AuditEvent)
+    .filter((event) => matchesAuditFilters(event, filters))
+    .slice(-limit);
 }
 
 function projectIds(policy: PolicyDoc): string[] {
@@ -112,6 +124,18 @@ function publicAgent(entry: AgentRegistryEntry): Omit<AgentRegistryEntry, 'publi
   return rest;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPublicJwk(value: unknown): value is JsonWebKey {
+  if (!isObject(value)) return false;
+  return value['kty'] === 'OKP'
+    && value['crv'] === 'Ed25519'
+    && typeof value['x'] === 'string'
+    && value['d'] === undefined;
+}
+
 function isAgentStatus(value: unknown): value is AgentLifecycleStatus {
   return typeof value === 'string' && (AGENT_STATUSES as readonly string[]).includes(value);
 }
@@ -129,11 +153,21 @@ function isGovernance(value: unknown): value is GovernanceBoundary {
 }
 
 function isRolePolicy(value: unknown): value is RolePolicy {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const obj = value as Record<string, unknown>;
+  if (!isObject(value)) return false;
+  const obj = value;
   return isStringArray(obj['models'])
     && isStringArray(obj['tools'])
     && isGovernance(obj['governance']);
+}
+
+function matchesAuditFilters(event: AuditEvent, filters: AuditFilters): boolean {
+  if (filters.agentId !== undefined && event.agentId !== filters.agentId) return false;
+  if (filters.role !== undefined && event.role !== filters.role) return false;
+  if (filters.action !== undefined && event.action !== filters.action) return false;
+  if (filters.resource !== undefined && event.resource !== filters.resource) return false;
+  if (filters.decision !== undefined && event.decision !== filters.decision) return false;
+  if (filters.projectId !== undefined && event.governance?.projectId !== filters.projectId) return false;
+  return true;
 }
 
 async function handleProjects(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
@@ -169,6 +203,66 @@ async function handleProjects(req: IncomingMessage, res: ServerResponse, method:
 async function handleAgents(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
   if (parts[1] !== 'agents') return false;
   const registry = loadRegistry();
+  if (method === 'POST' && parts.length === 2) {
+    if (!requireRole(req, res, 'admin')) return true;
+    const body = await readJson<{
+      agentId?: unknown;
+      role?: unknown;
+      publicKeyJwk?: unknown;
+      description?: unknown;
+      governance?: unknown;
+      status?: unknown;
+    }>(req);
+    if (typeof body.agentId !== 'string' || body.agentId.trim() === '') {
+      sendError(res, 400, 'invalid_request', 'agentId is required');
+      return true;
+    }
+    if (typeof body.role !== 'string' || body.role.trim() === '') {
+      sendError(res, 400, 'invalid_request', 'role is required');
+      return true;
+    }
+    if (!isPublicJwk(body.publicKeyJwk)) {
+      sendError(res, 400, 'invalid_request', 'publicKeyJwk is required');
+      return true;
+    }
+    if (body.description !== undefined && typeof body.description !== 'string') {
+      sendError(res, 400, 'invalid_request', 'description must be a string');
+      return true;
+    }
+    if (!isGovernance(body.governance)) {
+      sendError(res, 400, 'invalid_request', 'governance must contain string organizationId, projectId, or environment');
+      return true;
+    }
+    if (body.status !== undefined && !isAgentStatus(body.status)) {
+      sendError(res, 400, 'invalid_request', 'status must be active, disabled, or revoked');
+      return true;
+    }
+    const agentId = body.agentId.trim();
+    const role = body.role.trim();
+    if (registry.agents.some((agent) => agent.agentId === agentId)) {
+      sendError(res, 409, 'conflict', `agent "${agentId}" already exists`);
+      return true;
+    }
+    const policy = loadPolicy();
+    if (!policy.roles[role]) {
+      sendError(res, 400, 'invalid_request', `role "${role}" not found`);
+      return true;
+    }
+    const entry: AgentRegistryEntry = {
+      agentId,
+      role,
+      publicKeyJwk: body.publicKeyJwk,
+      createdAt: new Date().toISOString(),
+    };
+    if (body.status !== undefined) entry.status = body.status;
+    if (body.description !== undefined) entry.description = body.description;
+    if (body.governance !== undefined) entry.governance = body.governance;
+    if (entry.status === 'revoked') entry.revokedAt = new Date().toISOString();
+    registry.agents.push(entry);
+    saveRegistry(registry);
+    sendJson(res, 201, publicAgent(entry));
+    return true;
+  }
   if (method === 'GET' && parts.length === 2) {
     if (!requireRole(req, res, 'viewer')) return true;
     sendJson(res, 200, {
@@ -231,6 +325,18 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, method: s
     if (typeof body.revokedReason === 'string') entry.revokedReason = body.revokedReason;
     saveRegistry(registry);
     sendJson(res, 200, publicAgent(entry));
+    return true;
+  }
+  if (method === 'DELETE' && parts.length === 3) {
+    if (!requireRole(req, res, 'admin')) return true;
+    const before = registry.agents.length;
+    registry.agents = registry.agents.filter((agent) => agent.agentId !== parts[2]);
+    if (registry.agents.length === before) {
+      sendError(res, 404, 'not_found', `agent "${parts[2]}" not found`);
+      return true;
+    }
+    saveRegistry(registry);
+    sendJson(res, 200, { deleted: parts[2] });
     return true;
   }
   return false;
@@ -308,8 +414,17 @@ async function handleAudit(req: IncomingMessage, res: ServerResponse, method: st
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 100), 1), 1000);
   const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
   const verify = url.searchParams.get('verify') === '1' ? verifyChain(file) : undefined;
+  const resource = url.searchParams.get('resource') ?? url.searchParams.get('model') ?? undefined;
+  const filters: AuditFilters = {
+    agentId: url.searchParams.get('agentId') ?? undefined,
+    role: url.searchParams.get('role') ?? undefined,
+    action: url.searchParams.get('action') ?? undefined,
+    resource,
+    decision: url.searchParams.get('decision') ?? undefined,
+    projectId: url.searchParams.get('projectId') ?? undefined,
+  };
   sendJson(res, 200, {
-    events: auditEvents(limit),
+    events: auditEvents(limit, filters),
     verify,
   });
   return true;

@@ -80,3 +80,12 @@
   - 管理 API 的 `x-user-id` / `x-user-role` 测试头仅在未配置 session token service 的测试环境生效；真实 gateway 启动后必须使用有效 session token。
   - 新增覆盖 `/api/v1/projects` 与真实 session service 存在时忽略测试头的测试用例。
 - 本轮基线验证：变更前 `npm test` 通过 284 tests，`npm run typecheck` 通过。
+
+### Milestone 3 管理 API 收尾
+
+- 本轮对照计划书 §8 中 Milestone 3 交付继续补齐管理 API：
+  - Agent 管理新增管理员创建与删除路由；创建时校验 Ed25519 公钥、角色存在性、重复 agentId，并继续避免在响应中暴露 `publicKeyJwk`。
+  - Audit 管理新增按 `agentId`、`projectId`、`model`/`resource`、`decision`、`role`、`action` 查询过滤，支撑计划书中按 agent/project/model/decision 查询审计的要求。
+  - 新增对应管理 API 测试覆盖。
+- 本轮基线验证：变更前 `npm test` 通过 286 tests，`npm run typecheck` 通过。
+- 当前判断：Milestone 3 的 REST API、auth middleware、本地账号/API Key 基础与测试交付已形成可进入 Milestone 4（最小 Web 控制台）的闭环。

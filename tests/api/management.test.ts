@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +39,9 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/shared/paths.ts', () => ({
-  AUDIT_DIR: state.auditDir,
+  get AUDIT_DIR() {
+    return state.auditDir;
+  },
 }));
 
 vi.mock('../../src/shared/config.ts', () => ({
@@ -197,6 +199,82 @@ describe('enterprise management API', () => {
     expect(state.registry.agents[0]?.status).toBe('disabled');
     expect(role.status).toBe(200);
     expect(state.policy.roles['payments-agent']?.models).toEqual(['deepseek-chat']);
+  });
+
+  it('lets admins create and delete agents without returning public keys', async () => {
+    const headers = { 'x-user-id': 'admin-01', 'x-user-role': 'admin' };
+
+    const created = await request(port, 'POST', '/api/agents', {
+      agentId: 'agent-02',
+      role: 'demo-agent',
+      publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'second-public-key' },
+      governance: { projectId: 'agentzt' },
+      description: 'managed from API',
+    }, headers);
+    const duplicate = await request(port, 'POST', '/api/agents', {
+      agentId: 'agent-02',
+      role: 'demo-agent',
+      publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'duplicate-public-key' },
+    }, headers);
+    const deleted = await request(port, 'DELETE', '/api/agents/agent-02', undefined, headers);
+
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      agentId: 'agent-02',
+      role: 'demo-agent',
+      governance: { projectId: 'agentzt' },
+    });
+    expect(JSON.stringify(created.body)).not.toContain('second-public-key');
+    expect(JSON.stringify(created.body)).not.toContain('publicKeyJwk');
+    expect(duplicate.status).toBe(409);
+    expect(deleted.status).toBe(200);
+    expect(state.registry.agents.map((agent) => agent.agentId)).toEqual(['agent-01']);
+  });
+
+  it('filters audit events by agent, project, model, and decision', async () => {
+    const headers = { 'x-user-id': 'viewer-01', 'x-user-role': 'viewer' };
+    mkdirSync(state.auditDir, { recursive: true });
+    writeFileSync(join(state.auditDir, 'gateway-audit.jsonl'), [
+      JSON.stringify({
+        ts: '2026-06-23T00:00:00.000Z',
+        requestId: 'req-1',
+        agentId: 'agent-01',
+        role: 'demo-agent',
+        governance: { projectId: 'agentzt' },
+        action: 'model.call',
+        resource: 'deepseek-chat',
+        decision: 'allow',
+        reason: 'ok',
+      }),
+      JSON.stringify({
+        ts: '2026-06-23T00:00:01.000Z',
+        requestId: 'req-2',
+        agentId: 'agent-02',
+        role: 'demo-agent',
+        governance: { projectId: 'payments' },
+        action: 'model.call',
+        resource: 'claude-sonnet-4-6',
+        decision: 'deny',
+        reason: 'blocked',
+      }),
+    ].join('\n') + '\n');
+
+    const response = await request(
+      port,
+      'GET',
+      '/api/audit?agentId=agent-01&projectId=agentzt&model=deepseek-chat&decision=allow',
+      undefined,
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.events).toHaveLength(1);
+    expect(response.body.events[0]).toMatchObject({
+      requestId: 'req-1',
+      agentId: 'agent-01',
+      resource: 'deepseek-chat',
+      decision: 'allow',
+    });
   });
 
   it('denies viewer mutations and returns audit chain status', async () => {
