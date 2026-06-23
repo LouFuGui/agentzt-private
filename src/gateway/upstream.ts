@@ -21,6 +21,10 @@ type ResolvedProvider = UpstreamProviderConfig & {
   name: string;
 };
 
+type UpstreamProvider = {
+  call(apiKey: string, req: ModelRequest): Promise<ModelResponse>;
+};
+
 type CompiledRoute = {
   pattern: string;
   provider: string;
@@ -150,60 +154,70 @@ async function passthroughModel(
       },
     };
   }
-  if (provider.type === 'deepseek') {
-    return callDeepSeek(provider, apiKey, req);
-  }
-  return callAnthropic(provider, apiKey, req);
+  return createUpstreamProvider(provider).call(apiKey, req);
 }
 
-async function callAnthropic(
-  provider: ResolvedProvider,
-  apiKey: string,
-  req: ModelRequest,
-): Promise<ModelResponse> {
-  const url = `${provider.baseUrl.replace(/\/$/, '')}/v1/messages`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(req.body),
-  });
-  const body = await resp.json().catch(() => ({}));
-  const usage = (body as Record<string, unknown>)['usage'] as
-    | { input_tokens?: number; output_tokens?: number }
-    | undefined;
-  return { status: resp.status, body, usage, provider: provider.name };
+function createUpstreamProvider(provider: ResolvedProvider): UpstreamProvider {
+  if (provider.type === 'deepseek') return new DeepSeekProvider(provider);
+  return new AnthropicProvider(provider);
 }
 
-async function callDeepSeek(
-  provider: ResolvedProvider,
-  apiKey: string,
-  req: ModelRequest,
-): Promise<ModelResponse> {
-  const openAiBody = toOpenAiChatBody(req.body, req.model, provider.defaultModel);
-  const url = `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: ['Bearer', apiKey].join(' '),
-    },
-    body: JSON.stringify(openAiBody),
-  });
-  const body = await resp.json().catch(() => ({}));
-  const usage = openAiUsage(body);
-  if (req.protocol === 'openai-chat') {
-    return { status: resp.status, body, usage, provider: provider.name };
+class AnthropicProvider implements UpstreamProvider {
+  private readonly provider: ResolvedProvider;
+
+  constructor(provider: ResolvedProvider) {
+    this.provider = provider;
   }
-  return {
-    status: resp.status,
-    body: resp.ok ? toAnthropicMessage(body, req.model) : body,
-    usage,
-    provider: provider.name,
-  };
+
+  async call(apiKey: string, req: ModelRequest): Promise<ModelResponse> {
+    const url = `${this.provider.baseUrl.replace(/\/$/, '')}/v1/messages`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(req.body),
+    });
+    const body = await resp.json().catch(() => ({}));
+    const usage = (body as Record<string, unknown>)['usage'] as
+      | { input_tokens?: number; output_tokens?: number }
+      | undefined;
+    return { status: resp.status, body, usage, provider: this.provider.name };
+  }
+}
+
+class DeepSeekProvider implements UpstreamProvider {
+  private readonly provider: ResolvedProvider;
+
+  constructor(provider: ResolvedProvider) {
+    this.provider = provider;
+  }
+
+  async call(apiKey: string, req: ModelRequest): Promise<ModelResponse> {
+    const openAiBody = toOpenAiChatBody(req.body, req.model, this.provider.defaultModel);
+    const url = `${this.provider.baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: ['Bearer', apiKey].join(' '),
+      },
+      body: JSON.stringify(openAiBody),
+    });
+    const body = await resp.json().catch(() => ({}));
+    const usage = openAiUsage(body);
+    if (req.protocol === 'openai-chat') {
+      return { status: resp.status, body, usage, provider: this.provider.name };
+    }
+    return {
+      status: resp.status,
+      body: resp.ok ? toAnthropicMessage(body, req.model) : body,
+      usage,
+      provider: this.provider.name,
+    };
+  }
 }
 
 function configuredProviders(cfg: GatewayConfig): Record<string, ResolvedProvider> {

@@ -53,3 +53,11 @@
 - 新增覆盖：
   - upstream 已选中 provider 但缺少 key 时返回 `upstream_misconfigured` 并保留 provider。
   - Direct Model Access 遇到未知 provider route 时 fail closed 返回 502。
+
+### Milestone 2 Provider 抽象补强
+
+- 将 upstream passthrough 的 Anthropic/DeepSeek 转发逻辑收敛到 `UpstreamProvider` adapter 抽象，主 `passthroughModel()` 只负责路由解析、密钥读取与 provider 委派。
+- 当前 provider adapter 覆盖：
+  - `AnthropicProvider`：继续转发到 `/v1/messages`，使用 gateway 侧企业 API key。
+  - `DeepSeekProvider`：继续转发到 DeepSeek-compatible `/chat/completions`，并按调用协议保留 OpenAI raw response 或转换为 Anthropic message。
+- 新增 Anthropic 自定义 provider/baseUrl 委派测试，确保后续新增 provider 时可沿同一 adapter 模式扩展。

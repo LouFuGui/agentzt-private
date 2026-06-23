@@ -139,6 +139,57 @@ describe('upstream provider routing', () => {
     });
   });
 
+  it('delegates Anthropic routes through the configured provider adapter', async () => {
+    vi.stubEnv('CUSTOM_ANTHROPIC_KEY', 'test-anthropic-key');
+    const body = {
+      id: 'msg-1',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-sonnet-4-6',
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 4, output_tokens: 5 },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await callModel(config({
+      providers: {
+        anthropic: {
+          type: 'anthropic',
+          baseUrl: 'http://anthropic.internal',
+          apiKeyEnv: 'CUSTOM_ANTHROPIC_KEY',
+        },
+      },
+      routes: [{ pattern: 'claude-*', provider: 'anthropic', priority: 1 }],
+    }), {
+      model: 'claude-sonnet-4-6',
+      protocol: 'anthropic-messages',
+      body: {
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+      },
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body,
+      usage: { input_tokens: 4, output_tokens: 5 },
+      provider: 'anthropic',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://anthropic.internal/v1/messages');
+    expect(init.headers).toMatchObject({
+      'x-api-key': 'test-anthropic-key',
+      'anthropic-version': '2023-06-01',
+    });
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+  });
+
   it('keeps OpenAI chat responses raw for chat completions callers', async () => {
     vi.stubEnv('AGENTZT_UPSTREAM_DEEPSEEK_KEY', 'test-deepseek-key');
     const body = {
