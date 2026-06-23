@@ -238,9 +238,10 @@ async function handleRoles(req: IncomingMessage, res: ServerResponse, method: st
   }
   if (method === 'GET' && parts.length === 3) {
     if (!requireRole(req, res, 'viewer')) return true;
-    const role = policy.roles[parts[2]];
+    const roleName = parts[2] ?? '';
+    const role = policy.roles[roleName];
     if (!role) {
-      sendError(res, 404, 'not_found', `role "${parts[2]}" not found`);
+      sendError(res, 404, 'not_found', `role "${roleName}" not found`);
       return true;
     }
     sendJson(res, 200, role);
@@ -248,21 +249,23 @@ async function handleRoles(req: IncomingMessage, res: ServerResponse, method: st
   }
   if (method === 'PUT' && parts.length === 3) {
     if (!requireRole(req, res, 'admin')) return true;
+    const roleName = parts[2] ?? '';
     const body = await readJson<unknown>(req);
     if (!isRolePolicy(body)) {
       sendError(res, 400, 'invalid_request', 'role policy requires models and tools string arrays');
       return true;
     }
-    policy.roles[parts[2]] = body;
+    policy.roles[roleName] = body;
     savePolicy(policy);
-    sendJson(res, 200, { name: parts[2], role: body });
+    sendJson(res, 200, { name: roleName, role: body });
     return true;
   }
   if (method === 'DELETE' && parts.length === 3) {
     if (!requireRole(req, res, 'admin')) return true;
-    delete policy.roles[parts[2]];
+    const roleName = parts[2] ?? '';
+    delete policy.roles[roleName];
     savePolicy(policy);
-    sendJson(res, 200, { deleted: parts[2] });
+    sendJson(res, 200, { deleted: roleName });
     return true;
   }
   return false;
