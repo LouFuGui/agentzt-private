@@ -91,6 +91,9 @@ The demo exercises seven distinct controls:
     never sees it).
 - **`config/agents.json`** — the gateway's identity registry (public keys only). Populated
   by `npm run enroll`.
+- **Policy export** — `node src/cli/index.ts policy export` emits the enterprise policy,
+  roles, resource classes, and lifecycle state for GRC/SIEM/SOAR ingestion without agent
+  key material.
 
 Optional **Open Policy Agent (OPA)** enforcement is configured under `opa` in
 `config/gateway.json` (or enabled with `AGENTZT_OPA=1`). When enabled, the gateway posts

@@ -32,7 +32,7 @@ const DEFAULT_ENTERPRISE_DECISION_ORDER = [
   'output_guardrail',
 ];
 
-function defaultEnterprisePolicy(): EnterprisePolicyModel {
+export function defaultEnterprisePolicy(): EnterprisePolicyModel {
   return {
     version: 1,
     agentLifecycle: { denyStatuses: ['disabled', 'revoked'] },

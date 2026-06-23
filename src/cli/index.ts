@@ -5,6 +5,7 @@ import { generateEd25519 } from '../shared/crypto.ts';
 import { loadRegistry, saveRegistry, loadPolicy } from '../shared/config.ts';
 import { verifyChain } from '../shared/audit.ts';
 import { caInit, issueClientCert } from './tls.ts';
+import { exportPolicyState } from '../gateway/policy-export.ts';
 import type { AgentIdentityFile, AgentRegistryEntry } from '../shared/types.ts';
 
 function flag(args: string[], name: string): string | undefined {
@@ -19,6 +20,7 @@ Usage:
   npm run enroll -- --agent <id> --role <role> [--description <text>] [--mtls]
   node src/cli/index.ts agents
   node src/cli/index.ts audit [--limit N | --verify]
+  node src/cli/index.ts policy export
   node src/cli/index.ts roles
   node src/cli/index.ts tls init [--force]
   node src/cli/index.ts tls issue --agent <id>
@@ -30,6 +32,7 @@ Commands:
   agents   List registered agent identities.
   roles    List roles defined in config/policy.json.
   audit    Print recent gateway audit events, or --verify the hash chain.
+  policy   Export policy state for GRC/SIEM/SOAR ingestion.
   tls      Manage mutual-TLS PKI: 'init' creates the CA + gateway server cert,
            'issue --agent <id>' issues a client cert (requires openssl).
 `);
@@ -117,6 +120,15 @@ function cmdRoles(): void {
     console.log(`  tools:  ${r.tools.join(', ')}`);
     if (r.description) console.log(`  ${r.description}`);
   }
+
+  function cmdPolicy(args: string[]): void {
+    const sub = args[0];
+    if (sub !== 'export') {
+      console.error('usage: node src/cli/index.ts policy export');
+      process.exit(1);
+    }
+    console.log(JSON.stringify(exportPolicyState(loadPolicy(), loadRegistry()), null, 2));
+  }
 }
 
 function cmdAudit(args: string[]): void {
@@ -170,6 +182,7 @@ switch (cmd) {
   case 'agents': cmdAgents(); break;
   case 'roles': cmdRoles(); break;
   case 'audit': cmdAudit(rest); break;
+  case 'policy': cmdPolicy(rest); break;
   case 'tls': cmdTls(rest); break;
   default: usage();
 }
