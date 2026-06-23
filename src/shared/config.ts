@@ -4,6 +4,7 @@ import {
   GATEWAY_CONFIG_FILE,
   AGENTS_FILE,
 } from './paths.ts';
+import { JsonPolicyStore } from './policy-store.ts';
 import type {
   PolicyDoc,
   GatewayConfig,
@@ -14,12 +15,14 @@ function readJsonFile<T>(file: string): T {
   return JSON.parse(readFileSync(file, 'utf8')) as T;
 }
 
+const policyStore = new JsonPolicyStore(POLICY_FILE);
+
 export function loadPolicy(): PolicyDoc {
-  return readJsonFile<PolicyDoc>(POLICY_FILE);
+  return policyStore.load();
 }
 
 export function savePolicy(policy: PolicyDoc): void {
-  writeFileSync(POLICY_FILE, JSON.stringify(policy, null, 2) + '\n');
+  policyStore.save(policy);
 }
 
 export function loadGatewayConfig(): GatewayConfig {
