@@ -27,3 +27,13 @@
 - 完成 `PolicyStore` / `JsonPolicyStore` 实现与测试。
 - 运行 `npm test` 和 `npm run typecheck`。
 - 如 Milestone 1 收尾通过，下一阶段开始前需确认 DeepSeek Provider 的公网/内网 `baseUrl` 配置形态与模型路由规则。
+
+### Milestone 2 启动
+
+- 用户确认第一阶段结束后可按计划书 §9 顺序进入 Milestone 2：DeepSeek Provider 接入主网关路径。
+- 本轮目标：
+  - 保持 mock 模式离线可用。
+  - 在主 `callModel` 路径接入 provider routing。
+  - 支持 `deepseek-*` 模型路由到 DeepSeek-compatible `/chat/completions`。
+  - 支持默认公网 DeepSeek API 与可配置内网 DeepSeek-compatible `baseUrl`。
+  - API Key 仍只由 gateway 侧从 env/Vault 读取，agent 侧不持有模型密钥。

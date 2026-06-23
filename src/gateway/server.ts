@@ -838,7 +838,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 403, 'permission_error', opaDecision.reason);
     }
 
-    const result = await callModel(cfg, { model, body });
+    const result = await callModel(cfg, { model, body, protocol: 'anthropic-messages' });
     const latencyMs = Date.now() - started;
 
     // --- Output guardrails: context-aware review + secret redaction ---------
@@ -1080,7 +1080,11 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
 
     // --- Forward to upstream Model API ---
-    const result = await callModel(cfg, { model, body });
+    const result = await callModel(cfg, {
+      model,
+      body,
+      protocol: targetPath === 'chat/completions' ? 'openai-chat' : 'anthropic-messages',
+    });
     const latencyMs = Date.now() - started;
 
     // --- Output guardrails ---
@@ -1343,7 +1347,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
 
     // Call model (privacy: content not logged)
-    const result = await callModel(cfg, { model: body.model, body: { ...body } });
+    const result = await callModel(cfg, { model: body.model, body: { ...body }, protocol: 'openai-chat' });
     const latencyMs = Date.now() - started;
 
     // Process output

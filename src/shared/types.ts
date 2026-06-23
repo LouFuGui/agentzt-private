@@ -215,6 +215,18 @@ export type GatewayConfig = {
     mode: 'mock' | 'passthrough';
     anthropicBaseUrl: string;
     apiKeyEnv: string;
+    defaultProvider?: string;
+    providers?: Record<string, {
+      type: 'anthropic' | 'deepseek';
+      baseUrl: string;
+      apiKeyEnv: string;
+      defaultModel?: string;
+    }>;
+    routes?: Array<{
+      pattern: string;
+      provider: string;
+      priority?: number;
+    }>;
   };
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;

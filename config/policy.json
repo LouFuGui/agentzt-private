@@ -29,7 +29,7 @@
       "standard-models": {
         "description": "Approved standing model API access.",
         "kind": "model",
-        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6", "deepseek-chat", "deepseek-coder"],
         "governance": {
           "organizationId": "openguardrails",
           "projectId": "agentzt"
@@ -65,7 +65,7 @@
   "roles": {
     "demo-agent": {
       "description": "Role used by the bundled end-to-end demo. Allows one model and read-only tools so each demo step exercises a distinct control. email.send is never in standing scope — it requires explicit JIT elevation.",
-      "models": ["claude-sonnet-4-6"],
+      "models": ["claude-sonnet-4-6", "deepseek-chat"],
       "tools": ["kb.search", "db.query", "web.fetch"],
       "limits": { "maxOutputTokens": 1024, "requestsPerMinute": 60 },
       "jit": {
@@ -75,7 +75,7 @@
     },
     "research-agent": {
       "description": "Read-only research assistant. May summarize and search the internal knowledge base; cannot send email or write to databases.",
-      "models": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+      "models": ["claude-haiku-4-5", "claude-sonnet-4-6", "deepseek-chat"],
       "tools": ["kb.search", "web.fetch"],
       "limits": { "maxOutputTokens": 2048, "requestsPerMinute": 60 }
     },
