@@ -1,5 +1,6 @@
 import type { GatewayConfig } from '../shared/types.ts';
 import { newId } from '../shared/crypto.ts';
+import { wildcardToRegex } from '../shared/wildcard.ts';
 import { getModelApiKeyFromVault } from './vault-secrets.ts';
 
 export type ModelRequest = {
@@ -254,13 +255,6 @@ function configuredRoutes(cfg: GatewayConfig): CompiledRoute[] {
     priority: route.priority ?? 50,
     regex: wildcardToRegex(route.pattern),
   }));
-}
-
-function wildcardToRegex(pattern: string): RegExp {
-  // Treat "/" as the model namespace boundary. Hyphens remain valid within one
-  // model name segment (for example claude-sonnet-4-6 and deepseek-coder).
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
-  return new RegExp(`^${escaped}$`);
 }
 
 function toOpenAiChatBody(

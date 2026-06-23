@@ -3,6 +3,8 @@
  * 支持 DeepSeek + Anthropic 多模型路由
  */
 
+import { wildcardToRegex } from '../shared/wildcard.ts';
+
 export type LLMProvider = 'deepseek' | 'anthropic';
 
 export interface LLMRequest {
@@ -89,13 +91,10 @@ export class LLMRouter {
 }
 
 function compileRouteRule(rule: RouteRule): CompiledRouteRule {
-  // Treat "/" as the model namespace boundary. Hyphens remain valid within one
-  // model name segment (for example claude-sonnet-4-6 and deepseek-coder).
-  const escaped = rule.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
   return {
     ...rule,
     conditions: rule.conditions ? { ...rule.conditions } : undefined,
-    regex: new RegExp(`^${escaped}$`),
+    regex: wildcardToRegex(rule.pattern),
   };
 }
 
