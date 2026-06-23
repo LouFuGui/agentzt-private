@@ -3,6 +3,7 @@
  * 基于你的 OpenSandbox/AIOsandbox 经验设计
  */
 
+import { isAbsolute, relative, resolve } from 'node:path';
 import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
@@ -58,11 +59,13 @@ export class WebSandbox implements Sandbox {
   readonly type: SandboxType = 'web';
   readonly id: string;
 
+  private config: WebSandboxConfig;
   private browser?: unknown; // Puppeteer Browser
   private page?: unknown;    // Puppeteer Page
 
-  constructor(private config: WebSandboxConfig) {
+  constructor(config: WebSandboxConfig) {
     this.id = newId('web');
+    this.config = config;
   }
 
   async initialize(): Promise<void> {
@@ -158,11 +161,13 @@ export class CodeSandbox implements Sandbox {
   readonly type: SandboxType = 'code';
   readonly id: string;
 
+  private config: CodeSandboxConfig;
   private containerId?: string;
   private dockerAvailable: boolean = false;
 
-  constructor(private config: CodeSandboxConfig) {
+  constructor(config: CodeSandboxConfig) {
     this.id = newId('code');
+    this.config = config;
   }
 
   async initialize(): Promise<void> {
@@ -326,11 +331,13 @@ export class FileSandbox implements Sandbox {
   readonly type: SandboxType = 'file';
   readonly id: string;
 
+  private config: SandboxConfig;
   private allowedPaths: Set<string>;
 
-  constructor(private config: SandboxConfig) {
+  constructor(config: SandboxConfig) {
     this.id = newId('file');
-    this.allowedPaths = new Set(config.filesystemAccess || []);
+    this.config = config;
+    this.allowedPaths = new Set((config.filesystemAccess || []).map((allowed) => resolve(allowed)));
   }
 
   async initialize(): Promise<void> {
@@ -404,9 +411,11 @@ export class FileSandbox implements Sandbox {
     }
   }
 
-  private isPathAllowed(path: string): boolean {
+  private isPathAllowed(candidatePath: string): boolean {
+    const resolvedCandidate = resolve(candidatePath);
     for (const allowed of this.allowedPaths) {
-      if (path.startsWith(allowed)) return true;
+      const rel = relative(allowed, resolvedCandidate);
+      if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true;
     }
     return false;
   }
