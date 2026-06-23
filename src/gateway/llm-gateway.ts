@@ -10,7 +10,6 @@ import type { AccessTokenClaims } from '../shared/types.ts';
 const DEEPSEEK_CONFIG = {
   baseUrl: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
-  apiKey: process.env.DEEPSEEK_API_KEY || '',
 };
 
 export type LLMProvider = 'deepseek' | 'anthropic';
@@ -66,7 +65,7 @@ export class DeepSeekClient {
   private apiKey: string;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey ?? DEEPSEEK_CONFIG.apiKey;
+    this.apiKey = apiKey ?? process.env.DEEPSEEK_API_KEY ?? '';
     this.baseUrl = DEEPSEEK_CONFIG.baseUrl;
   }
 
