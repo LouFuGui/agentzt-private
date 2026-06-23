@@ -72,3 +72,11 @@
   - 覆盖 Project、Agent、Role、Policy、Audit 的首批管理路由。
   - Project 目前对应 enterprise governance `projectIds`；Agent 管理不暴露 `publicKeyJwk`，避免泄漏注册公钥细节之外的密钥材料。
 - 本轮基线验证：变更前 `npm test` 通过 280 tests，`npm run typecheck` 通过。
+
+### Milestone 3 管理 API 续推进
+
+- 本轮继续补强管理 API 的 REST 与认证基础：
+  - 企业管理路由新增 `/api/v1/...` 版本路径别名，与管理 API 设计规范中的 v1 路径约定对齐。
+  - 管理 API 的 `x-user-id` / `x-user-role` 测试头仅在未配置 session token service 的测试环境生效；真实 gateway 启动后必须使用有效 session token。
+  - 新增覆盖 `/api/v1/projects` 与真实 session service 存在时忽略测试头的测试用例。
+- 本轮基线验证：变更前 `npm test` 通过 284 tests，`npm run typecheck` 通过。

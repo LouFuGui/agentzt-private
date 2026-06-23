@@ -8,6 +8,9 @@ import type { AgentRegistry, PolicyDoc } from '../../src/shared/types.ts';
 
 const state = vi.hoisted(() => ({
   auditDir: '',
+  sessionService: null as null | {
+    verifyToken: (token: string) => { sub: string; role: 'owner' | 'admin' | 'viewer' };
+  },
   policy: {
     version: 1,
     defaultDeny: true,
@@ -48,6 +51,10 @@ vi.mock('../../src/shared/config.ts', () => ({
   saveRegistry: (registry: AgentRegistry) => {
     state.registry = JSON.parse(JSON.stringify(registry)) as AgentRegistry;
   },
+}));
+
+vi.mock('../../src/api/session.ts', () => ({
+  getSessionTokenService: () => state.sessionService,
 }));
 
 const { routeManagementApi } = await import('../../src/api/management.ts');
@@ -100,6 +107,7 @@ describe('enterprise management API', () => {
         governance: { projectId: 'agentzt' },
       }],
     };
+    state.sessionService = null;
     server = createServer(async (req, res) => {
       if (await routeManagementApi(req, res)) return;
       res.writeHead(404, { 'content-type': 'application/json' });
@@ -137,6 +145,36 @@ describe('enterprise management API', () => {
     expect(agents.body.agents[0]).toMatchObject({ agentId: 'agent-01', role: 'demo-agent' });
     expect(JSON.stringify(agents.body)).not.toContain('public-key');
     expect(JSON.stringify(agents.body)).not.toContain('publicKeyJwk');
+  });
+
+  it('supports /api/v1 management routes', async () => {
+    const headers = { 'x-user-id': 'viewer-01', 'x-user-role': 'viewer' };
+
+    const response = await request(port, 'GET', '/api/v1/projects', undefined, headers);
+
+    expect(response.status).toBe(200);
+    expect(response.body.projects).toEqual(['agentzt']);
+  });
+
+  it('ignores test user headers when session auth is configured', async () => {
+    state.sessionService = {
+      verifyToken: (token: string) => {
+        if (token !== 'valid-session') throw new Error('invalid token');
+        return { sub: 'admin-01', role: 'admin' };
+      },
+    };
+
+    const bypass = await request(port, 'POST', '/api/projects', { projectId: 'blocked' }, {
+      'x-user-id': 'admin-01',
+      'x-user-role': 'admin',
+    });
+    const authenticated = await request(port, 'POST', '/api/projects', { projectId: 'payments' }, {
+      authorization: ['Bear', 'er valid-session'].join(''),
+    });
+
+    expect(bypass.status).toBe(401);
+    expect(authenticated.status).toBe(201);
+    expect(state.policy.enterprise?.governance?.projectIds).toEqual(['agentzt', 'payments']);
   });
 
   it('lets admins add projects, update agents, and upsert roles', async () => {

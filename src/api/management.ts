@@ -34,9 +34,10 @@ function roleAtLeast(actual: UserRole, required: UserRole): boolean {
 }
 
 function authenticate(req: IncomingMessage): AuthContext | null {
+  const service = getSessionTokenService();
   const testUserId = req.headers['x-user-id'];
   const testRole = req.headers['x-user-role'];
-  if (typeof testUserId === 'string') {
+  if (!service && typeof testUserId === 'string') {
     return {
       userId: testUserId,
       role: typeof testRole === 'string' && isUserRole(testRole) ? testRole : 'viewer',
@@ -44,7 +45,6 @@ function authenticate(req: IncomingMessage): AuthContext | null {
   }
 
   const token = bearerToken(req);
-  const service = getSessionTokenService();
   if (!token || !service) return null;
 
   try {
@@ -75,6 +75,14 @@ function requireRole(req: IncomingMessage, res: ServerResponse, role: UserRole):
 function pathParts(req: IncomingMessage): string[] {
   const url = new URL(req.url ?? '/', 'http://localhost');
   return url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+}
+
+function managementParts(req: IncomingMessage): string[] {
+  const parts = pathParts(req);
+  if (parts[0] === 'api' && parts[1] === 'v1') {
+    return ['api', ...parts.slice(2)];
+  }
+  return parts;
 }
 
 function auditEvents(limit: number): AuditEvent[] {
@@ -308,7 +316,7 @@ async function handleAudit(req: IncomingMessage, res: ServerResponse, method: st
 }
 
 export async function routeManagementApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  const parts = pathParts(req);
+  const parts = managementParts(req);
   if (parts[0] !== 'api') return false;
   const method = req.method ?? 'GET';
   return await handleProjects(req, res, method, parts)
