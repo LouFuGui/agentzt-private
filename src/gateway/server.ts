@@ -602,7 +602,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const scopeList = kind === 'model' ? claims.scope.models : claims.scope.tools;
     const inScope = scopeList.includes('*') || scopeList.includes(name);
     const base = kind === 'model' ? policy.decideModel(claims.role, name) : policy.decideTool(claims.role, name);
-    if (inScope && base.allow) return { allow: true, reason: base.reason, via: 'scope' };
+    const resourceClass = policy.resourceClassFor(kind, name);
+    const jitRequired = resourceClass?.jitRequired === true;
+    if (inScope && base.allow && !jitRequired) return { allow: true, reason: base.reason, via: 'scope' };
 
     const grant = headerValue(req, ELEVATION_HEADER);
     if (grant) {
@@ -612,6 +614,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       } catch (err) {
         return { allow: false, reason: `elevation invalid: ${(err as Error).message}`, via: 'jit' };
       }
+    }
+    if (jitRequired) {
+      return { allow: false, reason: `${kind} "${name}" is in a JIT-required resource class`, via: 'jit' };
     }
     return { allow: false, reason: !inScope ? `${kind} "${name}" not in scope (no JIT elevation)` : base.reason, via: 'scope' };
   }

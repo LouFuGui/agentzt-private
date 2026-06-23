@@ -108,9 +108,9 @@ Node's built-in `fetch`, so no Temporal SDK dependency or build step is required
 point `baseUrl` at your Temporal REST endpoint, set `TEMPORAL_API_KEY` when your endpoint
 requires a bearer token, and enroll an agent with the `workflow-agent` role to grant:
 
-- `temporal.workflow.start` — start a workflow with `workflowType`, optional `workflowId`,
+- `temporal.workflow.start` — JIT-required: start a workflow with `workflowType`, optional `workflowId`,
   optional `taskQueue`, and JSON `input`.
-- `temporal.workflow.signal` — signal a workflow with `workflowId`, `signalName`, optional
+- `temporal.workflow.signal` — JIT-required: signal a workflow with `workflowId`, `signalName`, optional
   `runId`, and JSON `input`.
 - `temporal.workflow.query` — query a workflow with `workflowId`, `queryType`, optional
   `runId`, and JSON `input`.
