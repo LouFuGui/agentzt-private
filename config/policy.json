@@ -56,7 +56,7 @@
         "jitRequired": true,
         "jit": {
           "requireReason": true,
-          "maxTtlSeconds": 120
+          "maxTtlSeconds": 300
         }
       }
     }
