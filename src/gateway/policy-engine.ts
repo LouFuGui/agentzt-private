@@ -1,4 +1,13 @@
-import type { PolicyDoc, RolePolicy, Decision, RiskLevel } from '../shared/types.ts';
+import type {
+  AgentRegistryEntry,
+  EnterprisePolicyModel,
+  EnterpriseResourceClass,
+  GovernanceBoundary,
+  PolicyDoc,
+  RolePolicy,
+  Decision,
+  RiskLevel,
+} from '../shared/types.ts';
 
 const RISK_ORDINAL: Record<string, number> = {
   no_risk: 0,
@@ -6,6 +15,62 @@ const RISK_ORDINAL: Record<string, number> = {
   medium_risk: 2,
   high_risk: 3,
 };
+
+const RESOURCE_WILDCARD = '*';
+
+const DEFAULT_ENTERPRISE_DECISION_ORDER = [
+  'mtls',
+  'token',
+  'agent_lifecycle',
+  'runtime_signal',
+  'rbac_or_jit',
+  'rate_limit',
+  'input_guardrail',
+  'abac',
+  'opa',
+  'execution',
+  'output_guardrail',
+];
+
+export function defaultEnterprisePolicy(): EnterprisePolicyModel {
+  return {
+    version: 1,
+    agentLifecycle: { denyStatuses: ['disabled', 'revoked'] },
+    decisionOrder: DEFAULT_ENTERPRISE_DECISION_ORDER,
+  };
+}
+
+function cleanBoundary(boundary?: GovernanceBoundary): GovernanceBoundary | undefined {
+  if (!boundary) return undefined;
+  const clean: GovernanceBoundary = {};
+  if (boundary.organizationId) clean.organizationId = boundary.organizationId;
+  if (boundary.projectId) clean.projectId = boundary.projectId;
+  if (boundary.environment) clean.environment = boundary.environment;
+  return Object.keys(clean).length ? clean : undefined;
+}
+
+type BoundaryMatchResult = {
+  message: string;
+  approvalRequired?: boolean;
+  approvalType?: 'cross_environment_access';
+};
+
+function validateBoundaryMatch(required: GovernanceBoundary, actual?: GovernanceBoundary): BoundaryMatchResult | null {
+  if (required.organizationId && required.organizationId !== actual?.organizationId) {
+    return { message: `organization "${actual?.organizationId || 'unassigned'}" does not match "${required.organizationId}"` };
+  }
+  if (required.projectId && required.projectId !== actual?.projectId) {
+    return { message: `project "${actual?.projectId || 'unassigned'}" does not match "${required.projectId}"` };
+  }
+  if (required.environment && required.environment !== actual?.environment) {
+    return {
+      message: `environment "${actual?.environment || 'unassigned'}" does not match "${required.environment}"`,
+      approvalRequired: true,
+      approvalType: 'cross_environment_access',
+    };
+  }
+  return null;
+}
 
 /**
  * Deny-by-default RBAC policy engine (Foundation tier "least agency").
@@ -26,6 +91,66 @@ export class PolicyEngine {
     return this.policy.roles[role];
   }
 
+  enterprisePolicy(): EnterprisePolicyModel {
+    return this.policy.enterprise ?? defaultEnterprisePolicy();
+  }
+
+  resourceClassFor(kind: 'model' | 'tool', name: string): EnterpriseResourceClass | null {
+    const classes = this.enterprisePolicy().resourceClasses ?? {};
+    for (const resourceClass of Object.values(classes)) {
+      if (resourceClass.kind !== kind) continue;
+      if (resourceClass.resources.includes('*') || resourceClass.resources.includes(name)) {
+        return resourceClass;
+      }
+    }
+    return null;
+  }
+
+  governanceForAgent(entry: AgentRegistryEntry): GovernanceBoundary | undefined {
+    return cleanBoundary(entry.governance);
+  }
+
+  decideGovernance(entry: AgentRegistryEntry): Decision {
+    const role = this.policy.roles[entry.role];
+    if (!role) return { allow: false, reason: `role "${entry.role}" has no policy` };
+
+    const required = cleanBoundary(role.governance);
+    if (!required) return { allow: true, reason: 'no role governance boundary' };
+
+    const actual = cleanBoundary(entry.governance);
+    const mismatch = validateBoundaryMatch(required, actual);
+    if (mismatch) {
+      return {
+        allow: false,
+        reason: `governance boundary mismatch: ${mismatch.message}`,
+        approvalRequired: mismatch.approvalRequired,
+        approvalType: mismatch.approvalType,
+      };
+    }
+    return { allow: true, reason: 'governance boundary satisfied' };
+  }
+
+  decideResourceGovernance(
+    kind: 'model' | 'tool',
+    name: string,
+    actual?: GovernanceBoundary,
+  ): Decision {
+    const resourceClass = this.resourceClassFor(kind, name);
+    const required = cleanBoundary(resourceClass?.governance);
+    if (!required) return { allow: true, reason: 'no resource governance boundary' };
+
+    const mismatch = validateBoundaryMatch(required, cleanBoundary(actual));
+    if (mismatch) {
+      return {
+        allow: false,
+        reason: `resource governance boundary mismatch: ${mismatch.message}`,
+        approvalRequired: mismatch.approvalRequired,
+        approvalType: mismatch.approvalType,
+      };
+    }
+    return { allow: true, reason: 'resource governance boundary satisfied' };
+  }
+
   /** Models/tools an agent in this role may use — used to scope its token. */
   scopeForRole(role: string): { models: string[]; tools: string[] } {
     const r = this.policy.roles[role];
@@ -34,7 +159,7 @@ export class PolicyEngine {
   }
 
   private static listAllows(list: string[], resource: string): boolean {
-    return list.includes('*') || list.includes(resource);
+    return list.includes(RESOURCE_WILDCARD) || list.includes(resource);
   }
 
   decideModel(role: string, model: string): Decision {
@@ -108,7 +233,7 @@ export class PolicyEngine {
     const jit = this.policy.roles[role]?.jit;
     if (!jit) return { allow: false, reason: `role "${role}" has no JIT policy` };
     const list = kind === 'model' ? jit.elevatableModels ?? [] : jit.elevatableTools ?? [];
-    if (list.includes('*') || list.includes(name)) {
+    if (list.includes(RESOURCE_WILDCARD) || list.includes(name)) {
       return { allow: true, reason: `role "${role}" may elevate to ${kind} "${name}"` };
     }
     return { allow: false, reason: `role "${role}" may not elevate to ${kind} "${name}"` };
@@ -116,5 +241,35 @@ export class PolicyEngine {
 
   jitMaxTtl(role: string): number {
     return this.policy.roles[role]?.jit?.maxTtlSeconds ?? 0;
+  }
+
+  resourceClassJitMaxTtl(kind: 'model' | 'tool', name: string): number | undefined {
+    const ttl = this.resourceClassFor(kind, name)?.jit?.maxTtlSeconds;
+    return ttl && ttl > 0 ? ttl : undefined;
+  }
+
+  decideResourceClassJit(
+    kind: 'model' | 'tool',
+    name: string,
+    ctx: { reason: string; riskLevel?: RiskLevel },
+  ): Decision {
+    const resourceClass = this.resourceClassFor(kind, name);
+    const jit = resourceClass?.jit;
+    if (!jit) return { allow: true, reason: 'no resource-class JIT conditions' };
+
+    if (jit.requireReason && !ctx.reason.trim()) {
+      return { allow: false, reason: 'JIT: resource class requires an approval reason' };
+    }
+
+    if (jit.allowedRiskLevels?.length) {
+      if (!ctx.riskLevel) {
+        return { allow: false, reason: 'JIT: resource class requires a risk level' };
+      }
+      if (!jit.allowedRiskLevels.includes(ctx.riskLevel)) {
+        return { allow: false, reason: `JIT: risk ${ctx.riskLevel} is not allowed for resource class` };
+      }
+    }
+
+    return { allow: true, reason: 'resource-class JIT conditions satisfied' };
   }
 }

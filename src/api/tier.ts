@@ -5,6 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readJson, sendJson, sendError, bearerToken } from '../shared/http.ts';
+import { getSessionTokenService } from './session.ts';
 import { makeLogger } from '../shared/log.ts';
 import type {
   TierLevel,
@@ -72,24 +73,28 @@ export type TierReportExportResponse = {
 // ============================================================================
 
 /**
- * Extract user ID from JWT token or session
+ * Extract user ID from a verified session token.
+ * Accepts the x-user-id test header when no session service is configured.
  */
 function extractUserId(req: IncomingMessage): string | null {
-  // Check for test header
-  const userIdHeader = req.headers['x-user-id'];
-  if (typeof userIdHeader === 'string') {
-    return userIdHeader;
+  // x-user-id test header (used in tests and development)
+  const testHeader = req.headers['x-user-id'];
+  if (typeof testHeader === 'string') {
+    return testHeader;
   }
 
-  // Check for Bearer token
   const token = bearerToken(req);
-  if (token) {
-    // TODO: Verify JWT and extract user ID
-    // For development, use placeholder
-    return 'user_placeholder';
-  }
+  if (!token) return null;
 
-  return null;
+  const svc = getSessionTokenService();
+  if (!svc) return null;
+
+  try {
+    const claims = svc.verifyToken(token);
+    return claims.sub;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -1,0 +1,27 @@
+services:
+  gateway:
+    build: .
+    image: agentzt:local
+    command: npm run gateway
+    ports:
+      - "8700:8700"
+    environment:
+      NODE_ENV: production
+    volumes:
+      - ./config:/app/config
+      - ./.agentzt:/app/.agentzt
+
+  client:
+    image: agentzt:local
+    command: npm run client
+    profiles: ["client"]
+    depends_on:
+      - gateway
+    ports:
+      - "8787:8787"
+    environment:
+      NODE_ENV: production
+      AGENTZT_AGENT_ID: ${AGENTZT_AGENT_ID:-demo-agent-01}
+      AGENTZT_GATEWAY_URL: http://gateway:8700
+    volumes:
+      - ./.agentzt:/app/.agentzt

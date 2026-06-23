@@ -14,7 +14,7 @@ import {
   APP_ID_HEADER,
   API_KEY_HEADER,
 } from '../shared/http.ts';
-import { newId } from '../shared/crypto.ts';
+import { decodeJwsPayload, newId } from '../shared/crypto.ts';
 import { makeLogger } from '../shared/log.ts';
 import { AuditLogger } from '../shared/audit.ts';
 import { AUDIT_DIR, TLS_DIR } from '../shared/paths.ts';
@@ -58,8 +58,26 @@ import {
 } from './vault-secrets.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
+import { routeAppsApi } from '../api/apps.ts';
+import { routeConfigApi } from '../api/config.ts';
+import { routeQuotaApi } from '../api/quota.ts';
+import { routeStatsApi } from '../api/stats.ts';
+import { routeTierApi } from '../api/tier.ts';
+import { routeAlertsApi } from '../api/alerts.ts';
+import { routeManagementApi } from '../api/management.ts';
+import { routeConsole } from '../api/console.ts';
+import { AuthApi, createAuthApi, SessionTokenService } from '../api/auth.ts';
+import { setSessionTokenService } from '../api/session.ts';
 import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
 import type { AuditEvent } from '../shared/types.ts';
+
+const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
+
+function parseRiskLevel(value: unknown): RiskLevel | undefined {
+  return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
+    ? value as RiskLevel
+    : undefined;
+}
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
   provider: 'auto',
@@ -129,6 +147,13 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
+  // User management API — reuses the gateway's own signing key for session tokens.
+  const sessionService = new SessionTokenService(cfg.issuer, key.privateKey, key.publicKey);
+  setSessionTokenService(sessionService);
+  const authApi = createAuthApi(cfg.issuer, key.privateKey, key.publicKey);
+  // Ensure the app store is initialised (singleton, safe to call multiple times).
+  getAppStore();
+
   const tokenAudience = `${cfg.issuer}/v1/token`;
 
   // Returns the client cert CN for an mTLS connection, or null.
@@ -146,13 +171,33 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   function recordAudit(partial: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): AuditEvent {
-    return recordAuditWithTelemetry(audit, telemetry, partial);
+    const entry = partial.agentId ? identities.get(partial.agentId)?.entry : undefined;
+    const governance = partial.governance
+      ?? (entry ? policy.governanceForAgent(entry) : undefined);
+    return recordAuditWithTelemetry(audit, telemetry, { ...partial, governance });
+  }
+
+  function extractAuthErrorStatus(err: unknown): number {
+    const status = (err as { status?: unknown }).status;
+    return typeof status === 'number' ? status : 401;
+  }
+
+  function unverifiedAccessClaims(token: string): AccessTokenClaims | null {
+    try {
+      // Audit context only: this payload is intentionally unverified and must
+      // never feed authorization or enforcement decisions.
+      return decodeJwsPayload<AccessTokenClaims>(token);
+    } catch {
+      return null;
+    }
   }
 
   // Verify bearer token; on failure write the response and return null.
   function authorize(
     req: IncomingMessage,
     res: ServerResponse,
+    rid?: string,
+    resource = 'access-token',
   ): AccessTokenClaims | null {
     const token = bearerToken(req);
     if (!token) {
@@ -163,7 +208,20 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     try {
       claims = tokens.verifyAccessToken(token);
     } catch (err) {
-      sendError(res, 401, 'authentication_error', (err as Error).message);
+      const reason = (err as Error).message;
+      const rejectedClaims = unverifiedAccessClaims(token);
+      if (rid) {
+        recordAudit({
+          requestId: rid,
+          agentId: rejectedClaims?.sub ?? null,
+          role: rejectedClaims?.role ?? null,
+          action: 'token.reject',
+          resource,
+          decision: 'deny',
+          reason,
+        });
+      }
+      sendError(res, extractAuthErrorStatus(err), 'authentication_error', reason);
       return null;
     }
     // Channel binding: the token may only be used over a TLS channel
@@ -186,6 +244,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   function authorizeExtended(
     req: IncomingMessage,
     res: ServerResponse,
+    rid?: string,
+    resource = 'access-token',
   ): AuthResult | null {
     // Try Agent Token first (existing flow)
     const token = bearerToken(req);
@@ -220,10 +280,24 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
           type: 'agent_token',
           agentId: claims.sub,
           role: claims.role,
+          governance: claims.governance,
           scope: claims.scope,
         };
       } catch (err) {
-        sendError(res, 401, 'authentication_error', (err as Error).message);
+        const reason = (err as Error).message;
+        const rejectedClaims = unverifiedAccessClaims(token);
+        if (rid) {
+          recordAudit({
+            requestId: rid,
+            agentId: rejectedClaims?.sub ?? null,
+            role: rejectedClaims?.role ?? null,
+            action: 'token.reject',
+            resource,
+            decision: 'deny',
+            reason,
+          });
+        }
+        sendError(res, extractAuthErrorStatus(err), 'authentication_error', reason);
         return null;
       }
     }
@@ -399,6 +473,30 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         return await handleDirectModelAccess(req, res, rid);
       }
 
+      // === Minimal Web Console ===
+      if (routeConsole(req, res)) return;
+
+      // === Management API ===
+      if (path.startsWith('/api/')) {
+        // Auth routes (register/login/refresh/logout/me) — no prior auth required
+        if (await authApi.route(req, res)) return;
+        // Application management
+        if (await routeAppsApi(req, res)) return;
+        // Per-app configuration management
+        if (await routeConfigApi(req, res)) return;
+        // Quota management
+        if (await routeQuotaApi(req, res)) return;
+        // Statistics and analytics
+        if (await routeStatsApi(req, res)) return;
+        // Tier and subscription management
+        if (await routeTierApi(req, res)) return;
+        // Alert management
+        if (await routeAlertsApi(req, res)) return;
+        // Enterprise management (projects, agents, roles, policy, audit)
+        if (await routeManagementApi(req, res)) return;
+        return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
+      }
+
       return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
     } catch (err) {
       log.error(`unhandled error on ${method} ${path}: ${(err as Error).message}`);
@@ -510,15 +608,28 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleElevate(req: IncomingMessage, res: ServerResponse, rid: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, 'elevation');
     if (!claims) return;
-    const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number }>(req);
+    const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number; riskLevel?: string }>(req);
     const kind = body.kind === 'model' || body.kind === 'tool' ? body.kind : null;
     const name = typeof body.name === 'string' ? body.name : '';
     if (!kind || !name) {
       return sendError(res, 400, 'invalid_request', 'elevate requires "kind" (model|tool) and "name"');
     }
-    const reason = (body.reason ?? '').slice(0, 500) || 'unspecified';
+    const rawReason = typeof body.reason === 'string' ? body.reason.slice(0, 500).trim() : '';
+    const reason = rawReason || 'unspecified';
+    const riskLevel = parseRiskLevel(body.riskLevel);
+
+    const resourceGovernance = policy.decideResourceGovernance(kind, name, claims.governance);
+    if (!resourceGovernance.allow) {
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: resourceGovernance.reason,
+        meta: { reason },
+      });
+      log.deny(`elevation.reject ${claims.sub} -> ${kind}:${name}: ${resourceGovernance.reason}`);
+      return sendError(res, 403, 'permission_error', resourceGovernance.reason);
+    }
 
     const can = policy.canElevate(claims.role, kind, name);
     if (!can.allow) {
@@ -531,29 +642,59 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 403, 'permission_error', can.reason);
     }
 
+    const resourceClassJit = policy.decideResourceClassJit(kind, name, { reason: rawReason, riskLevel });
+    if (!resourceClassJit.allow) {
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: resourceClassJit.reason,
+        meta: { reason, riskLevel },
+      });
+      log.deny(`elevation.reject ${claims.sub} -> ${kind}:${name}: ${resourceClassJit.reason}`);
+      return sendError(res, 403, 'permission_error', resourceClassJit.reason);
+    }
+
     const maxTtl = policy.jitMaxTtl(claims.role);
-    const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : maxTtl, maxTtl);
+    const classMaxTtl = policy.resourceClassJitMaxTtl(kind, name);
+    const ttlLimit = classMaxTtl ? Math.min(maxTtl, classMaxTtl) : maxTtl;
+    const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : ttlLimit, ttlLimit);
     const { grant, claims: gc } = tokens.issueElevation(claims.sub, claims.role, { kind, name }, reason, ttl);
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'elevation.grant', resource: `${kind}:${name}`, decision: 'allow',
-      reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, exp: gc.exp },
+      reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, riskLevel, exp: gc.exp },
     });
     log.allow(`elevation.grant ${claims.sub} -> ${kind}:${name} (ttl=${ttl}s, reason="${reason}")`);
     return sendJson(res, 200, { elevation_grant: grant, expires_in: ttl, resource: { kind, name } });
   }
 
   // Authorize a resource: in standing scope, OR via a valid JIT elevation grant.
+  function approvalMeta(decision: { approvalRequired?: boolean; approvalType?: string }) {
+    if (!decision.approvalRequired) return undefined;
+    return { approvalRequired: true, approvalType: decision.approvalType };
+  }
+
   function authorizeResource(
     req: IncomingMessage,
     claims: AccessTokenClaims,
     kind: 'model' | 'tool',
     name: string,
-  ): { allow: boolean; reason: string; via: 'scope' | 'jit' } {
+  ): { allow: boolean; reason: string; via: 'scope' | 'jit'; approvalRequired?: boolean; approvalType?: string } {
     const scopeList = kind === 'model' ? claims.scope.models : claims.scope.tools;
     const inScope = scopeList.includes('*') || scopeList.includes(name);
     const base = kind === 'model' ? policy.decideModel(claims.role, name) : policy.decideTool(claims.role, name);
-    if (inScope && base.allow) return { allow: true, reason: base.reason, via: 'scope' };
+    const resourceClass = policy.resourceClassFor(kind, name);
+    const resourceGovernance = policy.decideResourceGovernance(kind, name, claims.governance);
+    if (!resourceGovernance.allow) {
+      return {
+        allow: false,
+        reason: resourceGovernance.reason,
+        via: 'scope',
+        approvalRequired: resourceGovernance.approvalRequired,
+        approvalType: resourceGovernance.approvalType,
+      };
+    }
+    const jitRequired = resourceClass?.jitRequired === true;
+    if (inScope && base.allow && !jitRequired) return { allow: true, reason: base.reason, via: 'scope' };
 
     const grant = headerValue(req, ELEVATION_HEADER);
     if (grant) {
@@ -563,6 +704,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       } catch (err) {
         return { allow: false, reason: `elevation invalid: ${(err as Error).message}`, via: 'jit' };
       }
+    }
+    if (jitRequired) {
+      return { allow: false, reason: `${kind} "${name}" is in a JIT-required resource class`, via: 'jit' };
     }
     return { allow: false, reason: !inScope ? `${kind} "${name}" not in scope (no JIT elevation)` : base.reason, via: 'scope' };
   }
@@ -620,7 +764,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleMessages(req: IncomingMessage, res: ServerResponse, rid: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, 'model');
     if (!claims) return;
     const started = Date.now();
     const body = await readJson<Record<string, unknown>>(req);
@@ -635,6 +779,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: authz.reason,
+        meta: approvalMeta(authz),
       });
       log.deny(`model.call ${claims.sub} -> ${model}: ${authz.reason}`);
       return sendError(res, 403, 'permission_error', authz.reason);
@@ -700,7 +845,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 403, 'permission_error', opaDecision.reason);
     }
 
-    const result = await callModel(cfg, { model, body });
+    const result = await callModel(cfg, { model, body, protocol: 'anthropic-messages' });
     const latencyMs = Date.now() - started;
 
     // --- Output guardrails: context-aware review + secret redaction ---------
@@ -730,6 +875,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       reason: decision.reason, latencyMs,
       meta: {
         authVia: authz.via,
+        upstreamProvider: result.provider,
         upstreamStatus: result.status,
         usage: result.usage,
         maxTokens: body['max_tokens'],
@@ -750,7 +896,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   async function handleTool(req: IncomingMessage, res: ServerResponse, rid: string, name: string) {
-    const claims = authorize(req, res);
+    const claims = authorize(req, res, rid, name);
     if (!claims) return;
     const started = Date.now();
 
@@ -762,6 +908,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: authz.reason,
+        meta: approvalMeta(authz),
       });
       log.deny(`tool.call ${claims.sub} -> ${name}: ${authz.reason}`);
       return sendError(res, 403, 'permission_error', authz.reason);
@@ -874,7 +1021,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     rid: string,
     targetPath: string,
   ): Promise<void> {
-    const auth = authorizeExtended(req, res);
+    const auth = authorizeExtended(req, res, rid, targetPath);
     if (!auth) return;
 
     if (auth.type === 'agent_token' && blockFalcoIfNeeded(res, rid, auth.agentId, auth.role, targetPath)) return;
@@ -941,7 +1088,11 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
 
     // --- Forward to upstream Model API ---
-    const result = await callModel(cfg, { model, body });
+    const result = await callModel(cfg, {
+      model,
+      body,
+      protocol: targetPath === 'chat/completions' ? 'openai-chat' : 'anthropic-messages',
+    });
     const latencyMs = Date.now() - started;
 
     // --- Output guardrails ---
@@ -990,6 +1141,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       score: (inputVerdict?.flagged ? 0.5 : 0) + (outputVerdict?.flagged ? 0.5 : 0),
       meta: {
         targetPath,
+        upstreamProvider: result.provider,
         upstreamStatus: result.status,
         usage: result.usage,
         guardrailProvider: appGuard.name,
@@ -1018,7 +1170,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     res: ServerResponse,
     rid: string,
   ): Promise<void> {
-    const auth = authorizeExtended(req, res);
+    const auth = authorizeExtended(req, res, rid, 'guardrails');
     if (!auth) return;
 
     const started = Date.now();
@@ -1204,8 +1356,32 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     }
 
     // Call model (privacy: content not logged)
-    const result = await callModel(cfg, { model: body.model, body: { ...body } });
+    const result = await callModel(cfg, { model: body.model, body: { ...body }, protocol: 'openai-chat' });
     const latencyMs = Date.now() - started;
+    if (result.status !== 200) {
+      recordAudit({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        appId: app.appId,
+        userId: app.ownerId,
+        action: 'direct.call',
+        resource: body.model,
+        decision: 'deny',
+        reason: 'upstream model call failed',
+        latencyMs,
+        categories: inputVerdict.categories,
+        score: inputVerdict.flagged ? 0.5 : 0,
+        meta: {
+          upstreamProvider: result.provider,
+          upstreamStatus: result.status,
+          guardrailProvider: appGuard.name,
+          inputFlagged: inputVerdict.flagged,
+        },
+      });
+      log.deny(`direct.call -> ${body.model}: upstream status ${result.status}`);
+      return sendJson(res, result.status, result.body, { [REQUEST_ID_HEADER]: rid });
+    }
 
     // Process output
     let outputContent = extractText(result.body);
@@ -1269,6 +1445,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         // Privacy: Only store counts, not content
         promptTokens,
         completionTokens,
+        upstreamProvider: result.provider,
         guardrailProvider: appGuard.name,
         inputFlagged: inputVerdict?.flagged,
         outputFlagged: outputVerdict?.flagged,

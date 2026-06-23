@@ -28,13 +28,6 @@ export default defineConfig({
         maxThreads: 4,
       },
     },
-    deps: {
-      optimizer: {
-        ssr: {
-          include: ['node:sqlite', 'sqlite'],
-        },
-      },
-    },
   },
   resolve: {
     alias: {

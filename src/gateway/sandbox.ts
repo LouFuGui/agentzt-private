@@ -3,6 +3,7 @@
  * 基于你的 OpenSandbox/AIOsandbox 经验设计
  */
 
+import { isAbsolute, relative, resolve } from 'node:path';
 import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
@@ -36,13 +37,15 @@ export interface SandboxResult {
   }>;
 }
 
+type FileSandboxOperation = { path: string; content?: string };
+
 // ============== 沙盒接口 ==============
 
 export interface Sandbox {
   readonly type: SandboxType;
   readonly id: string;
   initialize(): Promise<void>;
-  execute(code: string, config: SandboxConfig): Promise<SandboxResult>;
+  execute(input: string, config: SandboxConfig): Promise<SandboxResult>;
   destroy(): Promise<void>;
 }
 
@@ -58,16 +61,19 @@ export class WebSandbox implements Sandbox {
   readonly type: SandboxType = 'web';
   readonly id: string;
 
+  private config: WebSandboxConfig;
   private browser?: unknown; // Puppeteer Browser
   private page?: unknown;    // Puppeteer Page
 
-  constructor(private config: WebSandboxConfig) {
+  constructor(config: WebSandboxConfig) {
     this.id = newId('web');
+    this.config = config;
   }
 
   async initialize(): Promise<void> {
     // 动态导入 Puppeteer (可选依赖)
     try {
+      // @ts-expect-error Optional dependency; runtime falls back to mock mode when absent.
       const puppeteer = await import('puppeteer');
       this.browser = await puppeteer.default.launch({
         headless: true,
@@ -157,11 +163,13 @@ export class CodeSandbox implements Sandbox {
   readonly type: SandboxType = 'code';
   readonly id: string;
 
+  private config: CodeSandboxConfig;
   private containerId?: string;
   private dockerAvailable: boolean = false;
 
-  constructor(private config: CodeSandboxConfig) {
+  constructor(config: CodeSandboxConfig) {
     this.id = newId('code');
+    this.config = config;
   }
 
   async initialize(): Promise<void> {
@@ -327,17 +335,26 @@ export class FileSandbox implements Sandbox {
 
   private allowedPaths: Set<string>;
 
-  constructor(private config: SandboxConfig) {
+  constructor(config: SandboxConfig) {
     this.id = newId('file');
-    this.allowedPaths = new Set(config.filesystemAccess || []);
+    this.allowedPaths = new Set((config.filesystemAccess || []).map((allowed) => resolve(allowed)));
   }
 
   async initialize(): Promise<void> {
     log.info(`File sandbox ${this.id} initialized with paths: ${[...this.allowedPaths].join(', ')}`);
   }
 
-  async execute(operation: string, args: { path: string; content?: string }): Promise<SandboxResult> {
+  async execute(operation: string, args: FileSandboxOperation): Promise<SandboxResult>;
+  async execute(operation: string, args: SandboxConfig): Promise<SandboxResult>;
+  async execute(operation: string, args: SandboxConfig | FileSandboxOperation): Promise<SandboxResult> {
     const start = Date.now();
+    if (!('path' in args)) {
+      return {
+        success: false,
+        error: 'File sandbox requires a path',
+        metrics: { executionTime: Date.now() - start, memoryUsed: 0, networkRequests: 0 },
+      };
+    }
 
     // 路径安全检查
     if (!this.isPathAllowed(args.path)) {
@@ -393,9 +410,11 @@ export class FileSandbox implements Sandbox {
     }
   }
 
-  private isPathAllowed(path: string): boolean {
+  private isPathAllowed(candidatePath: string): boolean {
+    const resolvedCandidate = resolve(candidatePath);
     for (const allowed of this.allowedPaths) {
-      if (path.startsWith(allowed)) return true;
+      const rel = relative(allowed, resolvedCandidate);
+      if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true;
     }
     return false;
   }

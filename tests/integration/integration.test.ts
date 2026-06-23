@@ -89,7 +89,7 @@ describe('Integration Tests', () => {
       server = createServer(async (req, res) => {
         // Try each API router
         const handled = 
-          await authApi.handle(req, res) ||
+          await authApi.route(req, res) ||
           await routeAppsApi(req, res) ||
           await routeConfigApi(req, res) ||
           await routeStatsApi(req, res) ||
@@ -567,8 +567,8 @@ describe('Integration Tests', () => {
       ];
 
       for (const req of invalidRequests) {
-        const hasEmail = req.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.email);
-        const hasPassword = req.password && req.password.length >= 8;
+        const hasEmail = typeof req.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.email);
+        const hasPassword = typeof req.password === 'string' && req.password.length >= 8;
         
         expect(hasEmail && hasPassword).toBe(false);
       }

@@ -3,12 +3,24 @@
 export type Tier = 'foundation' | 'enterprise' | 'advanced';
 
 /** Public registry entry: binds a cryptographic identity to an agent and role. */
+export type AgentLifecycleStatus = 'active' | 'disabled' | 'revoked';
+
+export type GovernanceBoundary = {
+  organizationId?: string;
+  projectId?: string;
+  environment?: string;
+};
+
 export type AgentRegistryEntry = {
   agentId: string;
   role: string;
   publicKeyJwk: JsonWebKey;
   description?: string;
+  governance?: GovernanceBoundary;
+  status?: AgentLifecycleStatus;
   disabled?: boolean;
+  revokedAt?: string;
+  revokedReason?: string;
   createdAt?: string;
 };
 
@@ -52,15 +64,46 @@ export type RolePolicy = {
   description?: string;
   models: string[];
   tools: string[];
+  governance?: GovernanceBoundary;
   limits?: RoleLimits;
   abac?: AbacPolicy;
   jit?: JitPolicy;
+};
+
+export type EnterpriseResourceClass = {
+  description?: string;
+  kind: 'model' | 'tool';
+  resources: string[];
+  governance?: GovernanceBoundary;
+  jitRequired?: boolean;
+  jit?: {
+    requireReason?: boolean;
+    maxTtlSeconds?: number;
+    allowedRiskLevels?: RiskLevel[];
+  };
+};
+
+export type EnterpriseGovernanceModel = {
+  organizationIds?: string[];
+  projectIds?: string[];
+  environments?: string[];
+};
+
+export type EnterprisePolicyModel = {
+  version: number;
+  agentLifecycle: {
+    denyStatuses: AgentLifecycleStatus[];
+  };
+  decisionOrder: string[];
+  governance?: EnterpriseGovernanceModel;
+  resourceClasses?: Record<string, EnterpriseResourceClass>;
 };
 
 export type PolicyDoc = {
   version: number;
   defaultDeny: boolean;
   roles: Record<string, RolePolicy>;
+  enterprise?: EnterprisePolicyModel;
 };
 
 export type OpenGuardrailsConfig = {
@@ -172,6 +215,18 @@ export type GatewayConfig = {
     mode: 'mock' | 'passthrough';
     anthropicBaseUrl: string;
     apiKeyEnv: string;
+    defaultProvider?: string;
+    providers?: Record<string, {
+      type: 'anthropic' | 'deepseek';
+      baseUrl: string;
+      apiKeyEnv: string;
+      defaultModel?: string;
+    }>;
+    routes?: Array<{
+      pattern: string;
+      provider: string;
+      priority?: number;
+    }>;
   };
   guardrails?: GuardrailConfig;
   opa?: OpaConfig;
@@ -192,6 +247,7 @@ export type AccessTokenClaims = {
   iss: string;
   sub: string; // agentId
   role: string;
+  governance?: GovernanceBoundary;
   scope: { models: string[]; tools: string[] };
   iat: number;
   exp: number;
@@ -203,6 +259,7 @@ export type ElevationGrantClaims = {
   iss: string;
   sub: string; // agentId
   role: string;
+  governance?: GovernanceBoundary;
   resource: { kind: 'model' | 'tool'; name: string };
   reason: string;
   iat: number;
@@ -223,9 +280,20 @@ export type ClientAssertionClaims = {
 export type Decision = {
   allow: boolean;
   reason: string;
+  approvalRequired?: boolean;
+  approvalType?: 'cross_environment_access';
 };
 
 export type AuditAction =
+  | 'lifecycle.create'
+  | 'lifecycle.disable'
+  | 'lifecycle.revoke'
+  | 'lifecycle.role_change'
+  | 'lifecycle.key_rotation'
+  | 'policy.role_grant.change'
+  | 'policy.resource_class.change'
+  | 'policy.lifecycle_rule.change'
+  | 'policy.jit_config.change'
   | 'token.issue'
   | 'token.reject'
   | 'model.call'
@@ -245,6 +313,7 @@ export type AuditEvent = {
   requestId: string;
   agentId: string | null;
   role: string | null;
+  governance?: GovernanceBoundary;
   action: AuditAction;
   resource: string; // model id or tool name
   decision: 'allow' | 'deny';
@@ -497,6 +566,7 @@ export type AuthResult = {
   type: 'agent_token' | 'api_key';
   agentId?: string | null;
   role?: string | null;
+  governance?: GovernanceBoundary;
   scope?: { models: string[]; tools: string[] };
   app?: App;
   userId?: string | null;

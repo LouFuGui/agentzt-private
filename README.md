@@ -86,11 +86,16 @@ The demo exercises seven distinct controls:
   models and tools, plus per-role limits.
 - **`config/gateway.json`** — gateway port, token TTL, and upstream mode:
   - `mock` (default) — synthetic offline responses, no API key needed.
-  - `passthrough` — forwards to a real Anthropic-shaped Model API using the enterprise key
-    from Vault when enabled, otherwise the env var named in `upstream.apiKeyEnv` (the agent
-    never sees it).
+  - `passthrough` — routes by model to configured providers and forwards using enterprise
+    keys from Vault when enabled, otherwise the provider's `apiKeyEnv` (the agent never sees
+    it). The default routes send `deepseek-*` to the DeepSeek-compatible
+    `/chat/completions` provider and `claude-*` to Anthropic; provider `baseUrl` values can
+    point to public APIs or internal compatible endpoints.
 - **`config/agents.json`** — the gateway's identity registry (public keys only). Populated
   by `npm run enroll`.
+- **Policy export** — `node src/cli/index.ts policy export` emits the enterprise policy,
+  roles, resource classes, and lifecycle state for GRC/SIEM/SOAR ingestion without agent
+  key material.
 
 Optional **Open Policy Agent (OPA)** enforcement is configured under `opa` in
 `config/gateway.json` (or enabled with `AGENTZT_OPA=1`). When enabled, the gateway posts
@@ -105,9 +110,9 @@ Node's built-in `fetch`, so no Temporal SDK dependency or build step is required
 point `baseUrl` at your Temporal REST endpoint, set `TEMPORAL_API_KEY` when your endpoint
 requires a bearer token, and enroll an agent with the `workflow-agent` role to grant:
 
-- `temporal.workflow.start` — start a workflow with `workflowType`, optional `workflowId`,
+- `temporal.workflow.start` — JIT-required: start a workflow with `workflowType`, optional `workflowId`,
   optional `taskQueue`, and JSON `input`.
-- `temporal.workflow.signal` — signal a workflow with `workflowId`, `signalName`, optional
+- `temporal.workflow.signal` — JIT-required: signal a workflow with `workflowId`, `signalName`, optional
   `runId`, and JSON `input`.
 - `temporal.workflow.query` — query a workflow with `workflowId`, `queryType`, optional
   `runId`, and JSON `input`.

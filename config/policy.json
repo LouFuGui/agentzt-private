@@ -1,11 +1,71 @@
 {
   "version": 1,
   "defaultDeny": true,
+  "enterprise": {
+    "_comment": "Enterprise policy model foundation. Legacy roles remain authoritative for current enforcement; this section names the lifecycle gates, decision order, and high-blast-radius resource classes for enterprise governance tooling.",
+    "version": 1,
+    "agentLifecycle": {
+      "denyStatuses": ["disabled", "revoked"]
+    },
+    "decisionOrder": [
+      "mtls",
+      "token",
+      "agent_lifecycle",
+      "runtime_signal",
+      "rbac_or_jit",
+      "rate_limit",
+      "input_guardrail",
+      "abac",
+      "opa",
+      "execution",
+      "output_guardrail"
+    ],
+    "governance": {
+      "organizationIds": ["openguardrails"],
+      "projectIds": ["agentzt"],
+      "environments": ["development", "test", "production"]
+    },
+    "resourceClasses": {
+      "standard-models": {
+        "description": "Approved standing model API access.",
+        "kind": "model",
+        "resources": ["claude-haiku-4-5", "claude-sonnet-4-6", "deepseek-chat", "deepseek-coder"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt"
+        }
+      },
+      "read-only-tools": {
+        "description": "Low-blast-radius read-only tools suitable for standing scope.",
+        "kind": "tool",
+        "resources": ["kb.search", "db.query", "web.fetch", "temporal.workflow.query"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt"
+        }
+      },
+      "high-blast-radius-tools": {
+        "description": "Actions that should require explicit JIT or custom enterprise approval.",
+        "kind": "tool",
+        "resources": ["email.send", "temporal.workflow.start", "temporal.workflow.signal"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt",
+          "environment": "production"
+        },
+        "jitRequired": true,
+        "jit": {
+          "requireReason": true,
+          "maxTtlSeconds": 300
+        }
+      }
+    }
+  },
   "_comment": "Deny-by-default RBAC. An agent's role grants an explicit allow-list of models and tools. Anything not listed is denied. This is the Foundation-tier 'least agency' control: each agent reaches only the model APIs and tools its function requires.",
   "roles": {
     "demo-agent": {
       "description": "Role used by the bundled end-to-end demo. Allows one model and read-only tools so each demo step exercises a distinct control. email.send is never in standing scope — it requires explicit JIT elevation.",
-      "models": ["claude-sonnet-4-6"],
+      "models": ["claude-sonnet-4-6", "deepseek-chat"],
       "tools": ["kb.search", "db.query", "web.fetch"],
       "limits": { "maxOutputTokens": 1024, "requestsPerMinute": 60 },
       "jit": {
@@ -15,7 +75,7 @@
     },
     "research-agent": {
       "description": "Read-only research assistant. May summarize and search the internal knowledge base; cannot send email or write to databases.",
-      "models": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+      "models": ["claude-haiku-4-5", "claude-sonnet-4-6", "deepseek-chat"],
       "tools": ["kb.search", "web.fetch"],
       "limits": { "maxOutputTokens": 2048, "requestsPerMinute": 60 }
     },
@@ -42,10 +102,14 @@
       }
     },
     "workflow-agent": {
-      "description": "Durable workflow operator. May start, signal, and query Temporal workflows through the gateway; high-blast-radius tools still require separate policy grants.",
+      "description": "Durable workflow operator. May query Temporal workflows through standing scope; high-blast-radius start/signal actions require JIT elevation.",
       "models": ["claude-haiku-4-5", "claude-sonnet-4-6"],
-      "tools": ["kb.search", "temporal.workflow.start", "temporal.workflow.signal", "temporal.workflow.query"],
-      "limits": { "maxOutputTokens": 2048, "requestsPerMinute": 30 }
+      "tools": ["kb.search", "temporal.workflow.query"],
+      "limits": { "maxOutputTokens": 2048, "requestsPerMinute": 30 },
+      "jit": {
+        "elevatableTools": ["temporal.workflow.start", "temporal.workflow.signal"],
+        "maxTtlSeconds": 300
+      }
     }
   }
 }

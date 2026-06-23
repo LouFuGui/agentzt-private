@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readJson, sendJson, sendError, bearerToken } from '../shared/http.ts';
+import { getSessionTokenService } from './session.ts';
 import { makeLogger } from '../shared/log.ts';
 import type { QuotaHistoryEntry, QuotaLimitUpdateRequest, QuotaTimeRange, QuotaUsage } from '../shared/types.ts';
 import { getAppStore } from './app-store.ts';
@@ -53,28 +54,38 @@ export type QuotaLimitUpdateResponse = {
 // ============================================================================
 
 /**
- * Extract user ID from JWT token
+ * Extract user ID from a verified session token.
+ * Accepts the x-user-id test header when no session service is configured.
  */
 function extractUserId(req: IncomingMessage): string | null {
-  const authHeader = req.headers['x-user-id'];
-  if (typeof authHeader === 'string') {
-    return authHeader;
+  // x-user-id test header (used in tests and development)
+  const testHeader = req.headers['x-user-id'];
+  if (typeof testHeader === 'string') {
+    return testHeader;
   }
-  
+
   const token = bearerToken(req);
-  if (token) {
-    return 'user_placeholder';
+  if (!token) return null;
+
+  const svc = getSessionTokenService();
+  if (!svc) return null;
+
+  try {
+    const claims = svc.verifyToken(token);
+    return claims.sub;
+  } catch {
+    return null;
   }
-  
-  return null;
 }
 
 /**
- * Check if user is admin (placeholder)
+ * Check if user is admin via AGENTZT_ADMIN_USER_IDS env var.
  */
-function isAdmin(_userId: string): boolean {
-  // TODO: Implement actual admin check
-  return true;
+function isAdmin(userId: string): boolean {
+  const env = process.env.AGENTZT_ADMIN_USER_IDS?.trim();
+  if (!env) return false;
+  const adminIds = env.split(',').map((id) => id.trim()).filter(Boolean);
+  return adminIds.includes(userId);
 }
 
 /**

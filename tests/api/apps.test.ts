@@ -59,7 +59,7 @@ describe('Application Management Tests', () => {
       
       expect(apiKey).toBeDefined();
       expect(apiKey).toMatch(/^sk-xxai-[a-zA-Z0-9]{32}$/);
-      expect(apiKey.length).toBe(42); // sk-xxai- + 32 chars
+      expect(apiKey.length).toBe(40); // sk-xxai- + 32 chars
     });
 
     it('should generate unique API keys', () => {
@@ -77,7 +77,7 @@ describe('Application Management Tests', () => {
       
       expect(modelApiKey).toBeDefined();
       expect(modelApiKey).toMatch(/^sk-xxai-model-[a-zA-Z0-9]{32}$/);
-      expect(modelApiKey.length).toBe(48); // sk-xxai-model- + 32 chars
+      expect(modelApiKey.length).toBe(46); // sk-xxai-model- + 32 chars
     });
 
     it('should generate unique Model API keys', () => {
