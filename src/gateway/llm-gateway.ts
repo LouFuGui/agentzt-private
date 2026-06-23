@@ -3,12 +3,6 @@
  * 支持 DeepSeek + Anthropic 多模型路由
  */
 
-// DeepSeek API 配置
-const DEEPSEEK_CONFIG = {
-  baseUrl: 'https://api.deepseek.com/v1',
-  model: 'deepseek-chat',
-};
-
 export type LLMProvider = 'deepseek' | 'anthropic';
 
 export interface LLMRequest {
@@ -42,11 +36,17 @@ export interface RouteRule {
   };
 }
 
+type CompiledRouteRule = RouteRule & {
+  regex: RegExp;
+};
+
 /**
  * LLM 路由器 - 根据模型选择对应的 provider
  */
 export class LLMRouter {
-  private rules: RouteRule[] = [
+  private rules: CompiledRouteRule[];
+
+  constructor(rules: RouteRule[] = [
     { pattern: 'claude-opus-*', provider: 'anthropic', priority: 1 },
     { pattern: 'claude-sonnet-*', provider: 'anthropic', priority: 1 },
     { pattern: 'claude-haiku-*', provider: 'anthropic', priority: 1 },
@@ -54,7 +54,9 @@ export class LLMRouter {
     { pattern: 'claude-3-*-haiku*', provider: 'anthropic', priority: 1 },
     { pattern: 'deepseek-*', provider: 'deepseek', priority: 1 },
     { pattern: '*', provider: 'deepseek', priority: 99 },
-  ];
+  ]) {
+    this.rules = rules.map((rule) => compileRouteRule(rule));
+  }
 
   resolveProvider(model: string, request?: Pick<LLMRequest, 'max_tokens'>): LLMProvider {
     const rule = this.rules
@@ -68,27 +70,31 @@ export class LLMRouter {
   }
 
   registerRule(rule: RouteRule): void {
-    this.rules.push(rule);
+    this.rules.push(compileRouteRule(rule));
   }
 
   listRules(): RouteRule[] {
-    return this.rules.map((rule) => ({
+    return this.rules.map(({ regex: _regex, ...rule }) => ({
       ...rule,
       conditions: rule.conditions ? { ...rule.conditions } : undefined,
     }));
   }
 
-  private matches(rule: RouteRule, model: string, request?: Pick<LLMRequest, 'max_tokens'>): boolean {
-    if (!matchesPattern(rule.pattern, model)) return false;
+  private matches(rule: CompiledRouteRule, model: string, request?: Pick<LLMRequest, 'max_tokens'>): boolean {
+    if (!rule.regex.test(model)) return false;
     const maxTokens = rule.conditions?.max_tokens;
     if (maxTokens !== undefined && (request?.max_tokens ?? 0) > maxTokens) return false;
     return true;
   }
 }
 
-function matchesPattern(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`).test(value);
+function compileRouteRule(rule: RouteRule): CompiledRouteRule {
+  const escaped = rule.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return {
+    ...rule,
+    conditions: rule.conditions ? { ...rule.conditions } : undefined,
+    regex: new RegExp(`^${escaped}$`),
+  };
 }
 
 /**
@@ -97,10 +103,12 @@ function matchesPattern(pattern: string, value: string): boolean {
 export class DeepSeekClient {
   private baseUrl: string;
   private apiKey: string;
+  private defaultModel: string;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, baseUrl = 'https://api.deepseek.com/v1', defaultModel = 'deepseek-chat') {
     this.apiKey = apiKey ?? process.env.DEEPSEEK_API_KEY ?? '';
-    this.baseUrl = DEEPSEEK_CONFIG.baseUrl;
+    this.baseUrl = baseUrl;
+    this.defaultModel = defaultModel;
   }
 
   async chat(request: Omit<LLMRequest, 'provider'>): Promise<LLMResponse> {
@@ -117,7 +125,7 @@ export class DeepSeekClient {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: request.model || DEEPSEEK_CONFIG.model,
+        model: request.model || this.defaultModel,
         messages: request.messages,
         max_tokens: request.max_tokens || 1024,
         temperature: request.temperature || 0.7,
