@@ -108,7 +108,7 @@ describe('LLMGateway', () => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'test-deepseek-key');
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: 'chat-1',
-      model: 'claude-sonnet-4-6',
+      model: 'deepseek-chat',
       choices: [{ message: { content: 'ok' } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }), { status: 200 }));
@@ -116,7 +116,7 @@ describe('LLMGateway', () => {
 
     const result = await new LLMGateway().chat({
       provider: 'deepseek',
-      model: 'claude-sonnet-4-6',
+      model: 'custom-chat-model',
       messages: [{ role: 'user', content: 'hello' }],
     });
 

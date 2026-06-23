@@ -115,7 +115,7 @@ export class DeepSeekClient {
     const start = Date.now();
 
     if (!this.apiKey) {
-      throw new Error('DeepSeek API key is required in DEEPSEEK_API_KEY');
+      throw new Error('DeepSeek API key is required via constructor parameter or DEEPSEEK_API_KEY');
     }
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
