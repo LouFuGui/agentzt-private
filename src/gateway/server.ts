@@ -58,6 +58,14 @@ import {
 } from './vault-secrets.ts';
 import { getAppStore } from '../api/app-store.ts';
 import { validateApiKeyAndGetApp } from '../api/apps.ts';
+import { routeAppsApi } from '../api/apps.ts';
+import { routeConfigApi } from '../api/config.ts';
+import { routeQuotaApi } from '../api/quota.ts';
+import { routeStatsApi } from '../api/stats.ts';
+import { routeTierApi } from '../api/tier.ts';
+import { routeAlertsApi } from '../api/alerts.ts';
+import { AuthApi, createAuthApi, SessionTokenService } from '../api/auth.ts';
+import { setSessionTokenService } from '../api/session.ts';
 import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
 import type { AuditEvent } from '../shared/types.ts';
 
@@ -136,6 +144,13 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (falco) log.info(`Falco runtime policy: ON (webhook=${falco.config.webhookPath}, minimum=${falco.config.minimumPriority})`);
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
+
+  // User management API — reuses the gateway's own signing key for session tokens.
+  const sessionService = new SessionTokenService(cfg.issuer, key.privateKey, key.publicKey);
+  setSessionTokenService(sessionService);
+  const authApi = createAuthApi(cfg.issuer, key.privateKey, key.publicKey);
+  // Ensure the app store is initialised (singleton, safe to call multiple times).
+  getAppStore();
 
   const tokenAudience = `${cfg.issuer}/v1/token`;
 
@@ -454,6 +469,25 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       // === Direct Model Access: Privacy-Preserving ===
       if (method === 'POST' && path === '/v1/chat/completions') {
         return await handleDirectModelAccess(req, res, rid);
+      }
+
+      // === Management API ===
+      if (path.startsWith('/api/')) {
+        // Auth routes (register/login/refresh/logout/me) — no prior auth required
+        if (await authApi.route(req, res)) return;
+        // Application management
+        if (await routeAppsApi(req, res)) return;
+        // Per-app configuration management
+        if (await routeConfigApi(req, res)) return;
+        // Quota management
+        if (await routeQuotaApi(req, res)) return;
+        // Statistics and analytics
+        if (await routeStatsApi(req, res)) return;
+        // Tier and subscription management
+        if (await routeTierApi(req, res)) return;
+        // Alert management
+        if (await routeAlertsApi(req, res)) return;
+        return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
       }
 
       return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);

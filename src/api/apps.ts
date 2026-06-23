@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readJson, sendJson, sendError, bearerToken, headerValue, APP_ID_HEADER, API_KEY_HEADER } from '../shared/http.ts';
 import { makeLogger } from '../shared/log.ts';
 import { getAppStore } from './app-store.ts';
+import { getSessionTokenService } from './session.ts';
 import type { App, AppConfig, AppQuota, UserTier } from '../shared/types.ts';
 
 const log = makeLogger('apps-api');
@@ -63,26 +64,28 @@ function toAppResponse(app: App): AppResponse {
 }
 
 /**
- * Extract user ID from JWT token (placeholder - will be integrated with user auth)
- * For now, this returns a placeholder user ID
+ * Extract user ID from a verified session token.
+ * Accepts the x-user-id test header when no session service is configured.
  */
 function extractUserId(req: IncomingMessage): string | null {
-  // TODO: Integrate with actual user authentication
-  // For now, check for a test header or return a default
-  const authHeader = req.headers['x-user-id'];
-  if (typeof authHeader === 'string') {
-    return authHeader;
+  // x-user-id test header (used in tests and development)
+  const testHeader = req.headers['x-user-id'];
+  if (typeof testHeader === 'string') {
+    return testHeader;
   }
-  
-  // Check for Bearer token (placeholder)
+
   const token = bearerToken(req);
-  if (token) {
-    // TODO: Verify JWT and extract user ID
-    // For development, we'll use a placeholder
-    return 'user_placeholder';
+  if (!token) return null;
+
+  const svc = getSessionTokenService();
+  if (!svc) return null;
+
+  try {
+    const claims = svc.verifyToken(token);
+    return claims.sub;
+  } catch {
+    return null;
   }
-  
-  return null;
 }
 
 /**

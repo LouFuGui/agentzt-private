@@ -97,3 +97,19 @@ export type {
   TierReportResponse,
   TierReportExportResponse,
 } from './tier.ts';
+
+// Alert Management API exports
+export { routeAlertsApi } from './alerts.ts';
+export {
+  handleListAlerts,
+  handleGetAlert,
+  handleAcknowledgeAlert,
+  handleResolveAlert,
+  handleGetRules,
+  handleUpdateRules,
+  handleGetSettings,
+  handleUpdateSettings,
+} from './alerts.ts';
+
+// Session token service singleton
+export { setSessionTokenService, getSessionTokenService, resetSessionTokenService } from './session.ts';
