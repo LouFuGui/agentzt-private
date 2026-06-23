@@ -2,6 +2,8 @@ import type {
   AgentLifecycleStatus,
   AgentRegistry,
   AgentRegistryEntry,
+  EnterpriseGovernanceModel,
+  EnterpriseResourceClass,
   GovernanceBoundary,
   PolicyDoc,
   RolePolicy,
@@ -17,8 +19,8 @@ export type PolicyStateExport = {
     version: number;
     decisionOrder: string[];
     agentLifecycleDenyStatuses: AgentLifecycleStatus[];
-    governance: unknown;
-    resourceClasses: unknown;
+    governance: EnterpriseGovernanceModel | null;
+    resourceClasses: Record<string, EnterpriseResourceClass>;
   };
   roles: Record<string, {
     description?: string;
