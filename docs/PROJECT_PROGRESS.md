@@ -61,3 +61,14 @@
   - `AnthropicProvider`：继续转发到 `/v1/messages`，使用 gateway 侧企业 API key。
   - `DeepSeekProvider`：继续转发到 DeepSeek-compatible `/chat/completions`，并按调用协议保留 OpenAI raw response 或转换为 Anthropic message。
 - 新增 Anthropic 自定义 provider/baseUrl 委派测试，确保后续新增 provider 时可沿同一 adapter 模式扩展。
+
+### Milestone 2 完成度评估与 Milestone 3 启动
+
+- 对照计划书 §8，Milestone 2 的目标与交付已覆盖：
+  - DeepSeek model 转发、公网/内网 `baseUrl`、provider 配置、mock 模式保持可用。
+  - provider abstraction、DeepSeek provider、routing config、相关测试均已落入主 gateway 路径。
+- 已进入 Milestone 3（管理 API）最小闭环：
+  - 复用本地账号 session 鉴权与角色层级，新增企业管理 REST API。
+  - 覆盖 Project、Agent、Role、Policy、Audit 的首批管理路由。
+  - Project 目前对应 enterprise governance `projectIds`；Agent 管理不暴露 `publicKeyJwk`，避免泄漏注册公钥细节之外的密钥材料。
+- 本轮基线验证：变更前 `npm test` 通过 280 tests，`npm run typecheck` 通过。
