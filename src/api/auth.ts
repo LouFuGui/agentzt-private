@@ -387,7 +387,7 @@ export class AuthApi {
   /**
    * Route auth requests to appropriate handler.
    */
-  async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  async route(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     const method = req.method ?? 'GET';
@@ -414,6 +414,17 @@ export class AuthApi {
     }
 
     return false;
+  }
+
+  /**
+   * Handle auth requests as a standalone router.
+   */
+  async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const handled = await this.route(req, res);
+    if (!handled) {
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      return sendError(res, 404, 'not_found', `no route for ${req.method ?? 'GET'} ${url.pathname}`);
+    }
   }
 }
 

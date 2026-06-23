@@ -411,7 +411,9 @@ export class Agent {
     const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[1] ?? '');
+        const jsonBlock = jsonMatch[1];
+        if (!jsonBlock) return calls;
+        const parsed = JSON.parse(jsonBlock);
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
             if (

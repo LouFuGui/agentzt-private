@@ -89,7 +89,7 @@ describe('Integration Tests', () => {
       server = createServer(async (req, res) => {
         // Try each API router
         const handled = 
-          await authApi.handle(req, res) ||
+          await authApi.route(req, res) ||
           await routeAppsApi(req, res) ||
           await routeConfigApi(req, res) ||
           await routeStatsApi(req, res) ||
