@@ -48,8 +48,9 @@ export type PolicyStateExport = {
 
 function sortRecord<T>(record: Record<string, T> | undefined): Record<string, T> {
   const sorted: Record<string, T> = {};
-  for (const key of Object.keys(record ?? {}).sort()) {
-    sorted[key] = (record as Record<string, T>)[key];
+  const source = record ?? {};
+  for (const key of Object.keys(source).sort()) {
+    sorted[key] = source[key] as T;
   }
   return sorted;
 }

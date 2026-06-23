@@ -120,15 +120,15 @@ function cmdRoles(): void {
     console.log(`  tools:  ${r.tools.join(', ')}`);
     if (r.description) console.log(`  ${r.description}`);
   }
+}
 
-  function cmdPolicy(args: string[]): void {
-    const sub = args[0];
-    if (sub !== 'export') {
-      console.error('usage: node src/cli/index.ts policy export');
-      process.exit(1);
-    }
-    console.log(JSON.stringify(exportPolicyState(loadPolicy(), loadRegistry()), null, 2));
+function cmdPolicy(args: string[]): void {
+  const sub = args[0];
+  if (sub !== 'export') {
+    console.error('usage: node src/cli/index.ts policy export');
+    process.exit(1);
   }
+  console.log(JSON.stringify(exportPolicyState(loadPolicy(), loadRegistry()), null, 2));
 }
 
 function cmdAudit(args: string[]): void {
