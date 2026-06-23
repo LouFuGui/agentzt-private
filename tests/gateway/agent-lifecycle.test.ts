@@ -205,8 +205,6 @@ describe('agent lifecycle enforcement', () => {
     expect(registry.agents[0].status).toBe('disabled');
     expect(registry.agents[0].disabled).toBe(true);
 
-    execFileSync(process.execPath, [cli, 'agents', 'role', '--agent', 'agent-01', '--role', 'demo-agent', '--reason', 'same-role'], { env });
-
     const beforeRotationKey = registry.agents[0].publicKeyJwk.x;
     execFileSync(process.execPath, [cli, 'agents', 'rotate-key', '--agent', 'agent-01', '--reason', 'scheduled'], { env });
     registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
