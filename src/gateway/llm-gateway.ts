@@ -3,9 +3,6 @@
  * 支持 DeepSeek + Anthropic 多模型路由
  */
 
-import { loadGatewayConfig } from '../shared/config.ts';
-import type { AccessTokenClaims } from '../shared/types.ts';
-
 // DeepSeek API 配置
 const DEEPSEEK_CONFIG = {
   baseUrl: 'https://api.deepseek.com/v1',
@@ -35,26 +32,63 @@ export interface LLMResponse {
   latencyMs: number;
 }
 
+export interface RouteRule {
+  pattern: string;
+  provider: LLMProvider;
+  priority: number;
+  conditions?: {
+    max_tokens?: number;
+    required_capabilities?: string[];
+  };
+}
+
 /**
  * LLM 路由器 - 根据模型选择对应的 provider
  */
 export class LLMRouter {
-  private providers: Map<string, LLMProvider> = new Map([
-    ['deepseek-chat', 'deepseek'],
-    ['deepseek-coder', 'deepseek'],
-    ['claude-3-5-sonnet', 'anthropic'],
-    ['claude-3-5-haiku', 'anthropic'],
-    ['claude-opus-4-8', 'anthropic'],
-    ['claude-sonnet-4-6', 'anthropic'],
-  ]);
+  private rules: RouteRule[] = [
+    { pattern: 'claude-opus-*', provider: 'anthropic', priority: 1 },
+    { pattern: 'claude-sonnet-*', provider: 'anthropic', priority: 1 },
+    { pattern: 'claude-haiku-*', provider: 'anthropic', priority: 1 },
+    { pattern: 'claude-3-*-sonnet*', provider: 'anthropic', priority: 1 },
+    { pattern: 'claude-3-*-haiku*', provider: 'anthropic', priority: 1 },
+    { pattern: 'deepseek-*', provider: 'deepseek', priority: 1 },
+    { pattern: '*', provider: 'deepseek', priority: 99 },
+  ];
 
-  resolveProvider(model: string): LLMProvider {
-    return this.providers.get(model) || 'deepseek';
+  resolveProvider(model: string, request?: Pick<LLMRequest, 'max_tokens'>): LLMProvider {
+    const rule = this.rules
+      .filter((candidate) => this.matches(candidate, model, request))
+      .sort((a, b) => a.priority - b.priority)[0];
+    return rule?.provider ?? 'deepseek';
   }
 
-  registerModel(model: string, provider: LLMProvider) {
-    this.providers.set(model, provider);
+  registerModel(model: string, provider: LLMProvider): void {
+    this.registerRule({ pattern: model, provider, priority: 0 });
   }
+
+  registerRule(rule: RouteRule): void {
+    this.rules.push(rule);
+  }
+
+  listRules(): RouteRule[] {
+    return this.rules.map((rule) => ({
+      ...rule,
+      conditions: rule.conditions ? { ...rule.conditions } : undefined,
+    }));
+  }
+
+  private matches(rule: RouteRule, model: string, request?: Pick<LLMRequest, 'max_tokens'>): boolean {
+    if (!matchesPattern(rule.pattern, model)) return false;
+    const maxTokens = rule.conditions?.max_tokens;
+    if (maxTokens !== undefined && (request?.max_tokens ?? 0) > maxTokens) return false;
+    return true;
+  }
+}
+
+function matchesPattern(pattern: string, value: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(value);
 }
 
 /**
@@ -124,9 +158,9 @@ export class AnthropicClient {
   private baseUrl: string;
   private apiKey: string;
 
-  constructor() {
-    this.apiKey = process.env.ANTHROPIC_API_KEY || '';
-    this.baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+  constructor(apiKey?: string, baseUrl?: string) {
+    this.apiKey = apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+    this.baseUrl = baseUrl ?? process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com/v1';
   }
 
   async messages(request: {
@@ -196,7 +230,7 @@ export class LLMGateway {
   }
 
   async chat(request: LLMRequest): Promise<LLMResponse> {
-    const provider = request.provider || this.router.resolveProvider(request.model);
+    const provider = request.provider || this.router.resolveProvider(request.model, request);
 
     switch (provider) {
       case 'deepseek':
@@ -212,8 +246,12 @@ export class LLMGateway {
     }
   }
 
-  registerModel(model: string, provider: LLMProvider) {
+  registerModel(model: string, provider: LLMProvider): void {
     this.router.registerModel(model, provider);
+  }
+
+  registerRouteRule(rule: RouteRule): void {
+    this.router.registerRule(rule);
   }
 }
 
