@@ -98,10 +98,12 @@ function auditEvents(limit: number, filters: AuditFilters = {}): AuditEvent[] {
   const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
   if (!existsSync(file)) return [];
   const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
-  return lines
-    .map((line) => JSON.parse(line) as AuditEvent)
-    .filter((event) => matchesAuditFilters(event, filters))
-    .slice(-limit);
+  const events: AuditEvent[] = [];
+  for (let i = lines.length - 1; i >= 0 && events.length < limit; i--) {
+    const event = JSON.parse(lines[i]!) as AuditEvent;
+    if (matchesAuditFilters(event, filters)) events.push(event);
+  }
+  return events.reverse();
 }
 
 function projectIds(policy: PolicyDoc): string[] {
