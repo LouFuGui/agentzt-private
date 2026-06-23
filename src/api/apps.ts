@@ -150,7 +150,7 @@ export function validateApiKeyAndGetApp(apiKey: string): App | null {
  */
 function isAdmin(_userId: string): boolean {
   // TODO: Implement actual admin check
-  return true;
+  return _userId === 'admin';
 }
 
 // ============================================================================

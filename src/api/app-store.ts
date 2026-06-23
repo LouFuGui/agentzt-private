@@ -89,6 +89,7 @@ export class AppStore {
     }
 
     this.db = new DatabaseSync(dbPath);
+    appStoreInstance = this;
     this.initTables();
     log.info(`AppStore initialized at ${dbPath}`);
   }

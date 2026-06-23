@@ -50,7 +50,7 @@ export class QuotaTracker {
         type TEXT NOT NULL,
         delta INTEGER NOT NULL,
         total_used INTEGER NOT NULL,
-        limit INTEGER NOT NULL,
+        "limit" INTEGER NOT NULL,
         request_id TEXT,
         resource TEXT
       )
@@ -99,7 +99,7 @@ export class QuotaTracker {
 
     // Store history entry
     const insert = this.db.prepare(`
-      INSERT INTO quota_history (timestamp, app_id, user_id, type, delta, total_used, limit, request_id, resource)
+      INSERT INTO quota_history (timestamp, app_id, user_id, type, delta, total_used, "limit", request_id, resource)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     insert.run(
@@ -187,7 +187,7 @@ export class QuotaTracker {
     const limitCount = options?.limit ?? 1000;
 
     let query = `
-      SELECT timestamp, app_id, user_id, type, delta, total_used, limit, request_id, resource
+      SELECT timestamp, app_id, user_id, type, delta, total_used, "limit", request_id, resource
       FROM quota_history
       WHERE app_id = ? AND timestamp >= ?
     `;

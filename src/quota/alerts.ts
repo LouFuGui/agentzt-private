@@ -65,7 +65,7 @@ export class QuotaAlertsManager {
         threshold INTEGER NOT NULL,
         percentage INTEGER NOT NULL,
         used INTEGER NOT NULL,
-        limit INTEGER NOT NULL,
+        "limit" INTEGER NOT NULL,
         message TEXT NOT NULL
       )
     `);
@@ -164,7 +164,7 @@ export class QuotaAlertsManager {
 
     // Store alert history
     this.db.prepare(`
-      INSERT INTO quota_alerts (timestamp, app_id, user_id, type, threshold, percentage, used, limit, message)
+      INSERT INTO quota_alerts (timestamp, app_id, user_id, type, threshold, percentage, used, "limit", message)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       timestamp,
