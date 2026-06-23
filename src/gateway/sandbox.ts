@@ -37,6 +37,8 @@ export interface SandboxResult {
   }>;
 }
 
+type FileSandboxOperation = { path: string; content?: string };
+
 // ============== 沙盒接口 ==============
 
 export interface Sandbox {
@@ -331,12 +333,10 @@ export class FileSandbox implements Sandbox {
   readonly type: SandboxType = 'file';
   readonly id: string;
 
-  private config: SandboxConfig;
   private allowedPaths: Set<string>;
 
   constructor(config: SandboxConfig) {
     this.id = newId('file');
-    this.config = config;
     this.allowedPaths = new Set((config.filesystemAccess || []).map((allowed) => resolve(allowed)));
   }
 
@@ -344,10 +344,9 @@ export class FileSandbox implements Sandbox {
     log.info(`File sandbox ${this.id} initialized with paths: ${[...this.allowedPaths].join(', ')}`);
   }
 
-  async execute(
-    operation: string,
-    args: SandboxConfig | { path: string; content?: string }
-  ): Promise<SandboxResult> {
+  async execute(operation: string, args: FileSandboxOperation): Promise<SandboxResult>;
+  async execute(operation: string, args: SandboxConfig): Promise<SandboxResult>;
+  async execute(operation: string, args: SandboxConfig | FileSandboxOperation): Promise<SandboxResult> {
     const start = Date.now();
     if (!('path' in args)) {
       return {
