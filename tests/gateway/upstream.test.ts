@@ -26,6 +26,7 @@ describe('upstream provider routing', () => {
   it('routes DeepSeek and Claude models to their providers by default', () => {
     expect(resolveUpstreamProvider(config(), 'deepseek-chat').name).toBe('deepseek');
     expect(resolveUpstreamProvider(config(), 'claude-sonnet-4-6').name).toBe('anthropic');
+    expect(resolveUpstreamProvider(config(), 'deepseek-prod/admin').name).toBe('anthropic');
   });
 
   it('honors configured provider routes and DeepSeek baseUrl', async () => {
@@ -65,6 +66,7 @@ describe('upstream provider routing', () => {
       content: [{ type: 'text', text: 'ok' }],
       usage: { input_tokens: 2, output_tokens: 3 },
     });
+    expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://deepseek.internal/v1/chat/completions');
     expect(init.headers).toMatchObject({ authorization: ['Bearer', 'test-deepseek-key'].join(' ') });

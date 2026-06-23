@@ -10,6 +10,7 @@ describe('LLMRouter', () => {
     expect(router.resolveProvider('claude-opus-4-8')).toBe('anthropic');
     expect(router.resolveProvider('deepseek-coder')).toBe('deepseek');
     expect(router.resolveProvider('custom-model')).toBe('deepseek');
+    expect(router.resolveProvider('deepseek-prod/admin')).toBe('deepseek');
   });
 
   it('honors registered model and rule precedence', () => {

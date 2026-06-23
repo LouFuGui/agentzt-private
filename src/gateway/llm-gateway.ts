@@ -89,7 +89,7 @@ export class LLMRouter {
 }
 
 function compileRouteRule(rule: RouteRule): CompiledRouteRule {
-  const escaped = rule.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  const escaped = rule.pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
   return {
     ...rule,
     conditions: rule.conditions ? { ...rule.conditions } : undefined,
