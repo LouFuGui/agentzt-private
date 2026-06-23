@@ -1,6 +1,7 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GovernanceBoundary } from '../../src/shared/types.ts';
@@ -192,5 +193,39 @@ describe('agent lifecycle enforcement', () => {
     identities.reload();
 
     expect(() => tokens.verifyAccessToken(issued.token)).toThrow('governance boundary mismatch');
+  });
+
+  it('records audit events when CLI disables and revokes agents', async () => {
+    const { publicKeyJwk, root } = await makeHarness('active');
+    const cli = resolve(process.cwd(), 'src/cli/index.ts');
+    const env = { ...process.env, AGENTZT_ROOT: root };
+
+    execFileSync(process.execPath, [cli, 'agents', 'disable', '--agent', 'agent-01', '--reason', 'maintenance'], { env });
+    let registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
+    expect(registry.agents[0].status).toBe('disabled');
+    expect(registry.agents[0].disabled).toBe(true);
+
+    writeJsonFile(join(root, 'config', 'agents.json'), {
+      agents: [{
+        agentId: 'agent-01',
+        role: 'demo-agent',
+        publicKeyJwk,
+        status: 'active',
+      }],
+    });
+
+    execFileSync(process.execPath, [cli, 'agents', 'revoke', '--agent', 'agent-01', '--reason', 'compromised'], { env });
+    registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
+    expect(registry.agents[0].status).toBe('revoked');
+    expect(registry.agents[0].revokedAt).toEqual(expect.any(String));
+    expect(registry.agents[0].revokedReason).toBe('compromised');
+
+    const auditLines = readFileSync(join(root, '.agentzt', 'audit', 'gateway-audit.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(auditLines.map((event) => event.action)).toEqual(['lifecycle.disable', 'lifecycle.revoke']);
+    expect(auditLines.map((event) => event.resource)).toEqual(['agent:agent-01', 'agent:agent-01']);
+    expect(auditLines[1].reason).toBe('compromised');
   });
 });

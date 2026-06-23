@@ -1,12 +1,13 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { IDENTITIES_DIR, AUDIT_DIR } from '../shared/paths.ts';
-import { generateEd25519 } from '../shared/crypto.ts';
+import { generateEd25519, newId } from '../shared/crypto.ts';
 import { loadRegistry, saveRegistry, loadPolicy } from '../shared/config.ts';
 import { verifyChain } from '../shared/audit.ts';
+import { AuditLogger } from '../shared/audit.ts';
 import { caInit, issueClientCert } from './tls.ts';
 import { exportPolicyState } from '../gateway/policy-export.ts';
-import type { AgentIdentityFile, AgentRegistryEntry } from '../shared/types.ts';
+import type { AgentIdentityFile, AgentLifecycleStatus, AgentRegistryEntry, AuditAction } from '../shared/types.ts';
 
 function flag(args: string[], name: string): string | undefined {
   const idx = args.indexOf(name);
@@ -18,7 +19,7 @@ function usage(): never {
 
 Usage:
   npm run enroll -- --agent <id> --role <role> [--description <text>] [--mtls]
-  node src/cli/index.ts agents
+  node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>]]
   node src/cli/index.ts audit [--limit N | --verify]
   node src/cli/index.ts policy export
   node src/cli/index.ts roles
@@ -29,7 +30,7 @@ Commands:
   enroll   Generate a cryptographic identity for an agent, write the private
            key to .agentzt/identities/<id>.json, and register the public key
            in config/agents.json. With --mtls, also issue an mTLS client cert.
-  agents   List registered agent identities.
+  agents   List registered agent identities, or disable/revoke one with audit.
   roles    List roles defined in config/policy.json.
   audit    Print recent gateway audit events, or --verify the hash chain.
   policy   Export policy state for GRC/SIEM/SOAR ingestion.
@@ -37,6 +38,29 @@ Commands:
            'issue --agent <id>' issues a client cert (requires openssl).
 `);
   process.exit(1);
+}
+
+function agentStatus(entry: AgentRegistryEntry): AgentLifecycleStatus {
+  if (entry.revokedAt || entry.status === 'revoked') return 'revoked';
+  if (entry.disabled || entry.status === 'disabled') return 'disabled';
+  return 'active';
+}
+
+function recordLifecycleAudit(action: AuditAction, entry: AgentRegistryEntry, reason: string): void {
+  const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
+  audit.record({
+    requestId: newId('cli'),
+    agentId: entry.agentId,
+    role: entry.role,
+    governance: entry.governance,
+    action,
+    resource: `agent:${entry.agentId}`,
+    decision: 'allow',
+    reason,
+    meta: {
+      status: agentStatus(entry),
+    },
+  });
 }
 
 function cmdEnroll(args: string[]): void {
@@ -90,6 +114,7 @@ function cmdEnroll(args: string[]): void {
   if (description) entry.description = description;
   reg.agents.push(entry);
   saveRegistry(reg);
+  recordLifecycleAudit('lifecycle.create', entry, `agent "${agentId}" enrolled`);
 
   if (mtls) issueClientCert(agentId);
 
@@ -100,14 +125,69 @@ function cmdEnroll(args: string[]): void {
   console.log(`  AGENTZT_AGENT_ID=${agentId} npm run client`);
 }
 
-function cmdAgents(): void {
+function cmdAgentLifecycle(args: string[], target: 'disabled' | 'revoked'): void {
+  const agentId = flag(args, '--agent');
+  const reason = flag(args, '--reason');
+  if (!agentId) {
+    console.error(`error: agents ${target === 'disabled' ? 'disable' : 'revoke'} requires --agent <id>`);
+    process.exit(1);
+  }
+
+  const reg = loadRegistry();
+  const entry = reg.agents.find((a) => a.agentId === agentId);
+  if (!entry) {
+    console.error(`error: agent "${agentId}" is not registered`);
+    process.exit(1);
+  }
+
+  const current = agentStatus(entry);
+  if (current === target) {
+    console.log(`agent "${agentId}" is already ${target}`);
+    return;
+  }
+  if (current === 'revoked') {
+    console.error(`error: agent "${agentId}" is revoked and cannot be changed`);
+    process.exit(1);
+  }
+
+  if (target === 'disabled') {
+    entry.status = 'disabled';
+    entry.disabled = true;
+  } else {
+    entry.status = 'revoked';
+    entry.disabled = undefined;
+    entry.revokedAt = new Date().toISOString();
+    if (reason) entry.revokedReason = reason;
+  }
+
+  saveRegistry(reg);
+  const action = target === 'disabled' ? 'lifecycle.disable' : 'lifecycle.revoke';
+  recordLifecycleAudit(action, entry, reason ?? `agent "${agentId}" ${target}`);
+  console.log(`${target} agent "${agentId}"`);
+}
+
+function cmdAgents(args: string[]): void {
+  const sub = args[0];
+  if (sub === 'disable') {
+    cmdAgentLifecycle(args.slice(1), 'disabled');
+    return;
+  }
+  if (sub === 'revoke') {
+    cmdAgentLifecycle(args.slice(1), 'revoked');
+    return;
+  }
+  if (sub) {
+    console.error('usage: node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>]]');
+    process.exit(1);
+  }
+
   const reg = loadRegistry();
   if (reg.agents.length === 0) {
     console.log('no agents registered. Enroll one: npm run enroll -- --agent <id> --role <role>');
     return;
   }
   for (const a of reg.agents) {
-    const status = a.disabled ? 'DISABLED' : 'active';
+    const status = agentStatus(a);
     console.log(`${a.agentId}\trole=${a.role}\t${status}\t${a.description ?? ''}`);
   }
 }
@@ -179,7 +259,7 @@ function cmdTls(args: string[]): void {
 const [cmd, ...rest] = process.argv.slice(2);
 switch (cmd) {
   case 'enroll': cmdEnroll(rest); break;
-  case 'agents': cmdAgents(); break;
+  case 'agents': cmdAgents(rest); break;
   case 'roles': cmdRoles(); break;
   case 'audit': cmdAudit(rest); break;
   case 'policy': cmdPolicy(rest); break;

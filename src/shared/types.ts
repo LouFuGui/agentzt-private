@@ -266,6 +266,9 @@ export type Decision = {
 };
 
 export type AuditAction =
+  | 'lifecycle.create'
+  | 'lifecycle.disable'
+  | 'lifecycle.revoke'
   | 'token.issue'
   | 'token.reject'
   | 'model.call'
