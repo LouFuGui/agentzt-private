@@ -46,7 +46,7 @@ async function makeHarness(agentGovernance: GovernanceBoundary) {
       input: { mode: 'off' },
       output: { redactSecrets: false, check: false },
       openguardrails: {
-        baseUrl: 'https://api.openguuardrails.com/v1',
+        baseUrl: 'https://api.openguardrails.com/v1',
         apiKeyEnv: 'OPENGUARDRAILS_API_KEY',
         model: 'OpenGuardrails-Text',
         timeoutMs: 5000,
