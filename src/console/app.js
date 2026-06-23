@@ -14,7 +14,7 @@ function setStatus(message, ok = true) {
 }
 
 function authHeaders() {
-  return state.token ? { authorization: ['Bear', 'er ', state.token].join('') } : {};
+  return state.token ? { authorization: 'Bearer ' + state.token } : {};
 }
 
 async function api(path, options = {}) {
