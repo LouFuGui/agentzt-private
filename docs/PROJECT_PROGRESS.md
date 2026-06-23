@@ -89,3 +89,11 @@
   - 新增对应管理 API 测试覆盖。
 - 本轮基线验证：变更前 `npm test` 通过 286 tests，`npm run typecheck` 通过。
 - 当前判断：Milestone 3 的 REST API、auth middleware、本地账号/API Key 基础与测试交付已形成可进入 Milestone 4（最小 Web 控制台）的闭环。
+
+### Milestone 4 最小 Web 控制台启动
+
+- 本轮进入 Milestone 4（最小 Web 控制台）并完成首个 dependency-free 控制台闭环：
+  - Gateway 新增 `/console` 静态控制台入口，保持无构建步骤、无新增运行时依赖。
+  - 控制台支持登录、Agent 管理、Project 管理、Role/Policy 查看编辑、Audit 查询查看。
+  - 控制台复用 Milestone 3 的 `/api/auth/*` 与 `/api/v1/*` 管理 API，不新增独立后端状态。
+- 本轮基线验证：安装依赖前 `npm test` 因 `vitest` 缺失失败、`npm run typecheck` 因 `@types/node` 缺失失败；`npm ci` 后 `npm test` 与 `npm run typecheck` 均通过。

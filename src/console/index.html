@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AgentZT Console</title>
+    <link rel="stylesheet" href="/console/styles.css">
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">AgentZT</p>
+        <h1>Zero Trust Console</h1>
+      </div>
+      <button id="logout" class="secondary hidden" type="button">Log out</button>
+    </header>
+
+    <main>
+      <section id="login-panel" class="panel">
+        <h2>Login</h2>
+        <form id="login-form" class="grid">
+          <label>Email <input name="email" type="email" autocomplete="username" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section id="console-panel" class="hidden">
+        <div class="tabs" role="tablist" aria-label="Console sections">
+          <button class="tab active" data-tab="overview" type="button">Overview</button>
+          <button class="tab" data-tab="agents" type="button">Agents</button>
+          <button class="tab" data-tab="projects" type="button">Projects</button>
+          <button class="tab" data-tab="policy" type="button">Policy</button>
+          <button class="tab" data-tab="audit" type="button">Audit</button>
+        </div>
+
+        <section id="overview" class="view active panel">
+          <h2>Overview</h2>
+          <div class="cards">
+            <article><span id="agent-count">0</span><small>Agents</small></article>
+            <article><span id="project-count">0</span><small>Projects</small></article>
+            <article><span id="role-count">0</span><small>Roles</small></article>
+            <article><span id="audit-count">0</span><small>Audit events</small></article>
+          </div>
+        </section>
+
+        <section id="agents" class="view panel">
+          <div class="section-head">
+            <h2>Agent management</h2>
+            <button data-refresh="agents" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap"><table id="agents-table"></table></div>
+          <form id="agent-form" class="grid editor">
+            <h3>Create agent</h3>
+            <label>Agent ID <input name="agentId" required></label>
+            <label>Role <input name="role" required></label>
+            <label>Status
+              <select name="status">
+                <option value="active">active</option>
+                <option value="disabled">disabled</option>
+                <option value="revoked">revoked</option>
+              </select>
+            </label>
+            <label>Description <input name="description"></label>
+            <label>Public JWK JSON <textarea name="publicKeyJwk" rows="4" required></textarea></label>
+            <label>Governance JSON <textarea name="governance" rows="3" placeholder='{"projectId":"agentzt"}'></textarea></label>
+            <button type="submit">Create agent</button>
+          </form>
+        </section>
+
+        <section id="projects" class="view panel">
+          <div class="section-head">
+            <h2>Project management</h2>
+            <button data-refresh="projects" type="button">Refresh</button>
+          </div>
+          <ul id="project-list" class="list"></ul>
+          <form id="project-form" class="inline-form">
+            <input name="projectId" placeholder="project id" required>
+            <button type="submit">Add project</button>
+          </form>
+        </section>
+
+        <section id="policy" class="view panel">
+          <div class="section-head">
+            <h2>Role and policy editor</h2>
+            <button data-refresh="policy" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap"><table id="roles-table"></table></div>
+          <form id="role-form" class="grid editor">
+            <h3>Upsert role</h3>
+            <label>Role name <input name="roleName" required></label>
+            <label>Models (comma separated) <input name="models" required></label>
+            <label>Tools (comma separated) <input name="tools" required></label>
+            <label>Governance JSON <textarea name="governance" rows="3"></textarea></label>
+            <button type="submit">Save role</button>
+          </form>
+          <label>Full policy JSON <textarea id="policy-json" rows="14"></textarea></label>
+          <button id="save-policy" type="button">Save full policy</button>
+        </section>
+
+        <section id="audit" class="view panel">
+          <div class="section-head">
+            <h2>Audit viewer</h2>
+            <button data-refresh="audit" type="button">Refresh</button>
+          </div>
+          <form id="audit-filter" class="inline-form">
+            <input name="agentId" placeholder="agentId">
+            <input name="projectId" placeholder="projectId">
+            <input name="model" placeholder="model/resource">
+            <input name="decision" placeholder="decision">
+            <button type="submit">Filter</button>
+          </form>
+          <pre id="audit-output"></pre>
+        </section>
+      </section>
+
+      <p id="status" role="status"></p>
+    </main>
+    <script src="/console/app.js" defer></script>
+  </body>
+</html>

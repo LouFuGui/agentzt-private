@@ -65,6 +65,7 @@ import { routeStatsApi } from '../api/stats.ts';
 import { routeTierApi } from '../api/tier.ts';
 import { routeAlertsApi } from '../api/alerts.ts';
 import { routeManagementApi } from '../api/management.ts';
+import { routeConsole } from '../api/console.ts';
 import { AuthApi, createAuthApi, SessionTokenService } from '../api/auth.ts';
 import { setSessionTokenService } from '../api/session.ts';
 import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
@@ -471,6 +472,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       if (method === 'POST' && path === '/v1/chat/completions') {
         return await handleDirectModelAccess(req, res, rid);
       }
+
+      // === Minimal Web Console ===
+      if (routeConsole(req, res)) return;
 
       // === Management API ===
       if (path.startsWith('/api/')) {
