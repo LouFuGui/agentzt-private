@@ -4,6 +4,22 @@ Milestone 5 starts with a minimal, dependency-locked deployment path for enterpr
 networks that cannot fetch code at runtime. The image runs the repository directly on
 Node.js 22 native TypeScript support; no build or bundler step is required.
 
+## Milestone 5 completion checklist
+
+This document is the handoff checklist for the first offline private deployment milestone:
+
+- Dockerfile: `Dockerfile` builds a dependency-locked runtime image from the repository.
+- Compose: `compose.yml` runs the gateway and an optional client profile with mounted
+  `config/` and `.agentzt/` state.
+- Kubernetes manifests: `deploy/kubernetes/` contains gateway config, persistent state,
+  Deployment, and Service examples for an internal cluster.
+- Offline deployment docs: this file covers image export/import, transfer preflight,
+  Compose startup, and Kubernetes startup.
+
+Against the enterprise plan, Milestone 5 is complete at the minimal first-delivery level:
+the project is packageable, can be installed offline by loading the saved image, and can be
+deployed inside an enterprise network with either Compose or Kubernetes.
+
 ## Build the image online
 
 ```bash

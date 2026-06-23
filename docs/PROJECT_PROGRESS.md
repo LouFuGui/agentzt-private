@@ -115,3 +115,12 @@
 - 本轮继续推进 Milestone 5 的可验证性与交接安全：
   - 新增 deployment artifact 静态测试，覆盖 Dockerfile dependency lock、Compose gateway/client 挂载、Kubernetes ConfigMap/Deployment/Service/PVC 与离线部署文档关键步骤。
   - `docs/OFFLINE_DEPLOYMENT.md` 补充转移前 preflight，明确导出前运行测试/typecheck，并提醒不要夹带本地 API keys、跨环境私钥或不应外流的审计日志。
+
+### Milestone 5 完成度复核
+
+- 对照总计划书 §8 的 Milestone 5 目标与交付，本轮判断已达到首版最小交付：
+  - 可打包：`Dockerfile` 使用 lockfile 安装 runtime dependencies，并直接运行 Node 22 原生 TypeScript。
+  - 可离线安装：文档覆盖在线构建/导出镜像、离线环境 `docker load` 导入与启动。
+  - 可部署到企业内网：`compose.yml` 覆盖单机/内网 Compose，`deploy/kubernetes/` 覆盖集群 ConfigMap、Deployment、Service、PVC。
+  - 交付物完整：Dockerfile、Compose、Kubernetes manifests、offline deployment docs 均已落地，并有 deployment 静态测试保护。
+- 对照总计划书首版产品边界，Milestone 1-5 均已有最小闭环；后续如继续演进，应进入新的增强阶段，而不是 Milestone 5 的阻塞缺口。

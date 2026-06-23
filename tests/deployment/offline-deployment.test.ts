@@ -60,5 +60,7 @@ describe('offline private deployment artifacts', () => {
     expect(docs).toContain('docker compose up gateway');
     expect(docs).toContain('kubectl apply -f deploy/kubernetes/agentzt-config.yaml');
     expect(docs).toContain('kubectl apply -f deploy/kubernetes/gateway.yaml');
+    expect(docs).toContain('## Milestone 5 completion checklist');
+    expect(docs).toContain('Milestone 5 is complete at the minimal first-delivery level');
   });
 });
