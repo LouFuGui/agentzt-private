@@ -29,12 +29,10 @@ export class AccessTokenError extends Error {
   }
 }
 
-function boundaryKey(boundary?: GovernanceBoundary): string {
-  return JSON.stringify({
-    organizationId: boundary?.organizationId,
-    projectId: boundary?.projectId,
-    environment: boundary?.environment,
-  });
+function sameBoundary(a?: GovernanceBoundary, b?: GovernanceBoundary): boolean {
+  return a?.organizationId === b?.organizationId
+    && a?.projectId === b?.projectId
+    && a?.environment === b?.environment;
 }
 
 /**
@@ -222,7 +220,7 @@ export class TokenService {
     const governance = this.policy.decideGovernance(identity.entry);
     if (!governance.allow) throw new AccessTokenError(governance.reason, 403);
     const currentBoundary = this.policy.governanceForAgent(identity.entry);
-    if (boundaryKey(currentBoundary) !== boundaryKey(claims.governance)) {
+    if (!sameBoundary(currentBoundary, claims.governance)) {
       throw new AccessTokenError(`agent "${claims.sub}" governance boundary changed`, 403);
     }
     return claims;

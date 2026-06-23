@@ -159,6 +159,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
   function unverifiedAccessClaims(token: string): AccessTokenClaims | null {
     try {
+      // Audit context only: this payload is intentionally unverified and must
+      // never feed authorization or enforcement decisions.
       return decodeJwsPayload<AccessTokenClaims>(token);
     } catch {
       return null;

@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { GovernanceBoundary } from '../../src/shared/types.ts';
 
 const roots: string[] = [];
+type GovernanceHarness = { agent?: GovernanceBoundary; role?: GovernanceBoundary };
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
@@ -13,10 +15,7 @@ function writeJson(path: string, value: unknown): void {
 async function makeHarness(
   status?: 'active' | 'disabled' | 'revoked',
   legacyDisabled = false,
-  governance?: {
-    agent?: { organizationId?: string; projectId?: string; environment?: string };
-    role?: { organizationId?: string; projectId?: string; environment?: string };
-  },
+  governance?: GovernanceHarness,
 ) {
   const root = join(tmpdir(), `agentzt-lifecycle-${randomUUID()}`);
   roots.push(root);
