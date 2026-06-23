@@ -100,7 +100,9 @@ function auditEvents(limit: number, filters: AuditFilters = {}): AuditEvent[] {
   const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
   const events: AuditEvent[] = [];
   for (let i = lines.length - 1; i >= 0 && events.length < limit; i--) {
-    const event = JSON.parse(lines[i]!) as AuditEvent;
+    const line = lines[i];
+    if (!line) continue;
+    const event = JSON.parse(line) as AuditEvent;
     if (matchesAuditFilters(event, filters)) events.push(event);
   }
   return events.reverse();
