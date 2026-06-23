@@ -1,5 +1,5 @@
 const state = {
-  token: localStorage.getItem('agentzt.session') || '',
+  token: '',
   policy: null,
 };
 
@@ -176,7 +176,6 @@ document.querySelector('#login-form').addEventListener('submit', async (event) =
       }),
     });
     state.token = data.session.token;
-    localStorage.setItem('agentzt.session', state.token);
     showConsole(true);
     await refreshAll();
   } catch (err) {
@@ -191,7 +190,6 @@ logout.addEventListener('click', async () => {
     // Local logout still clears the browser session.
   }
   state.token = '';
-  localStorage.removeItem('agentzt.session');
   showConsole(false);
   setStatus('Logged out');
 });
@@ -299,12 +297,4 @@ document.querySelector('#audit-filter').addEventListener('submit', async (event)
   }
 });
 
-if (state.token) {
-  showConsole(true);
-  refreshAll().catch((err) => {
-    setStatus(err.message, false);
-    showConsole(false);
-  });
-} else {
-  showConsole(false);
-}
+showConsole(false);
