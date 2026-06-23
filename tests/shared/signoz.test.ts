@@ -22,6 +22,11 @@ function event(): AuditEvent {
     requestId: 'req_test',
     agentId: 'agent_1',
     role: 'demo-agent',
+    governance: {
+      organizationId: 'openguardrails',
+      projectId: 'agentzt',
+      environment: 'production',
+    },
     action: 'model.call',
     resource: 'claude-sonnet-4-6',
     decision: 'allow',
@@ -41,13 +46,18 @@ describe('SigNoz telemetry', () => {
 
   it('builds OTLP traces and logs from audit events', () => {
     const tracePayload = buildTracePayload('agentzt-test', [event()]) as {
-      resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string }> }> }>;
+      resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ name: string; attributes: Array<{ key: string; value: { stringValue?: string } }> }> }> }>;
     };
     const logPayload = buildLogPayload('agentzt-test', [event()]) as {
       resourceLogs: Array<{ scopeLogs: Array<{ logRecords: Array<{ body: { stringValue: string } }> }> }>;
     };
+    const attributes = tracePayload.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.attributes ?? [];
+    const attr = (key: string) => attributes.find((item) => item.key === key)?.value.stringValue;
 
     expect(tracePayload.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.name).toBe('model.call claude-sonnet-4-6');
+    expect(attr('agentzt.organization_id')).toBe('openguardrails');
+    expect(attr('agentzt.project_id')).toBe('agentzt');
+    expect(attr('agentzt.environment')).toBe('production');
     expect(logPayload.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body.stringValue).toBe('authorized');
   });
 
