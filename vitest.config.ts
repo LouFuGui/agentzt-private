@@ -31,7 +31,7 @@ export default defineConfig({
     deps: {
       optimizer: {
         ssr: {
-          include: ['node:sqlite', 'sqlite'],
+          include: ['node:sqlite'],
         },
       },
     },

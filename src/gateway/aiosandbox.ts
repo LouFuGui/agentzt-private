@@ -25,6 +25,10 @@ export interface AIOsandboxConfig {
   startupTimeout?: number;      // 启动等待超时 (ms)
 }
 
+type ResolvedAIOsandboxConfig = Omit<Required<AIOsandboxConfig>, 'containerId'> & {
+  containerId?: string;
+};
+
 export interface AIOsandboxStatus {
   healthy: boolean;
   version?: string;
@@ -69,7 +73,7 @@ export interface JupyterExecuteResult {
 
 export class AIOsandboxClient {
   readonly id: string;
-  private config: Required<AIOsandboxConfig>;
+  private config: ResolvedAIOsandboxConfig;
   private containerId?: string;
 
   constructor(config: AIOsandboxConfig) {

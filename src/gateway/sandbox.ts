@@ -42,7 +42,7 @@ export interface Sandbox {
   readonly type: SandboxType;
   readonly id: string;
   initialize(): Promise<void>;
-  execute(code: string, config: SandboxConfig): Promise<SandboxResult>;
+  execute(input: string, config: SandboxConfig): Promise<SandboxResult>;
   destroy(): Promise<void>;
 }
 
@@ -68,6 +68,7 @@ export class WebSandbox implements Sandbox {
   async initialize(): Promise<void> {
     // 动态导入 Puppeteer (可选依赖)
     try {
+      // @ts-expect-error Optional dependency; runtime falls back to mock mode when absent.
       const puppeteer = await import('puppeteer');
       this.browser = await puppeteer.default.launch({
         headless: true,
@@ -336,8 +337,18 @@ export class FileSandbox implements Sandbox {
     log.info(`File sandbox ${this.id} initialized with paths: ${[...this.allowedPaths].join(', ')}`);
   }
 
-  async execute(operation: string, args: { path: string; content?: string }): Promise<SandboxResult> {
+  async execute(
+    operation: string,
+    args: SandboxConfig | { path: string; content?: string }
+  ): Promise<SandboxResult> {
     const start = Date.now();
+    if (!('path' in args)) {
+      return {
+        success: false,
+        error: 'File sandbox requires a path',
+        metrics: { executionTime: Date.now() - start, memoryUsed: 0, networkRequests: 0 },
+      };
+    }
 
     // 路径安全检查
     if (!this.isPathAllowed(args.path)) {

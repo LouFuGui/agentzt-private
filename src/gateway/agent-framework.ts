@@ -178,6 +178,9 @@ export function createBuiltinTools(): ToolDefinition[] {
       execute: async (args, context) => {
         const fileSandbox = await sandboxManager.createFileSandbox(['/tmp', '.']);
         try {
+          if (typeof args.path !== 'string') {
+            throw new Error('file_read requires a string path');
+          }
           const result = await fileSandbox.execute('read', { path: args.path });
           return result;
         } finally {
@@ -408,10 +411,18 @@ export class Agent {
     const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[1]);
+        const parsed = JSON.parse(jsonMatch[1] ?? '');
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
-            if (item.name && item.arguments) {
+            if (
+              item &&
+              typeof item === 'object' &&
+              'name' in item &&
+              'arguments' in item &&
+              typeof item.name === 'string' &&
+              item.arguments &&
+              typeof item.arguments === 'object'
+            ) {
               calls.push(item);
             }
           }

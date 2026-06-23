@@ -10,7 +10,7 @@ import type { AccessTokenClaims } from '../shared/types.ts';
 const DEEPSEEK_CONFIG = {
   baseUrl: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
-  apiKey: process.env.DEEPSEEK_API_KEY || 'sk-13c693bd1a7c4078abd6880312f2cf7c', // 用户提供的key
+  apiKey: process.env.DEEPSEEK_API_KEY || '',
 };
 
 export type LLMProvider = 'deepseek' | 'anthropic';
@@ -66,12 +66,16 @@ export class DeepSeekClient {
   private apiKey: string;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || DEEPSEEK_API_KEY;
+    this.apiKey = apiKey ?? DEEPSEEK_CONFIG.apiKey;
     this.baseUrl = DEEPSEEK_CONFIG.baseUrl;
   }
 
   async chat(request: Omit<LLMRequest, 'provider'>): Promise<LLMResponse> {
     const start = Date.now();
+
+    if (!this.apiKey) {
+      throw new Error('DeepSeek API key is required in DEEPSEEK_API_KEY');
+    }
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
