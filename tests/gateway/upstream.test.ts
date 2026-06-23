@@ -67,7 +67,8 @@ describe('upstream provider routing', () => {
       usage: { input_tokens: 2, output_tokens: 3 },
     });
     expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = call;
     expect(url).toBe('http://deepseek.internal/v1/chat/completions');
     expect(init.headers).toMatchObject({ authorization: ['Bearer', 'test-deepseek-key'].join(' ') });
     expect(JSON.parse(init.body as string)).toMatchObject({
