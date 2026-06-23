@@ -61,6 +61,14 @@ import { validateApiKeyAndGetApp } from '../api/apps.ts';
 import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
 import type { AuditEvent } from '../shared/types.ts';
 
+const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
+
+function parseRiskLevel(value: unknown): RiskLevel | undefined {
+  return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
+    ? value as RiskLevel
+    : undefined;
+}
+
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
   provider: 'auto',
   input: { mode: 'block' },
@@ -561,13 +569,15 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   async function handleElevate(req: IncomingMessage, res: ServerResponse, rid: string) {
     const claims = authorize(req, res, rid, 'elevation');
     if (!claims) return;
-    const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number }>(req);
+    const body = await readJson<{ kind?: string; name?: string; reason?: string; ttlSeconds?: number; riskLevel?: string }>(req);
     const kind = body.kind === 'model' || body.kind === 'tool' ? body.kind : null;
     const name = typeof body.name === 'string' ? body.name : '';
     if (!kind || !name) {
       return sendError(res, 400, 'invalid_request', 'elevate requires "kind" (model|tool) and "name"');
     }
-    const reason = (body.reason ?? '').slice(0, 500) || 'unspecified';
+    const rawReason = typeof body.reason === 'string' ? body.reason.slice(0, 500).trim() : '';
+    const reason = rawReason || 'unspecified';
+    const riskLevel = parseRiskLevel(body.riskLevel);
 
     const can = policy.canElevate(claims.role, kind, name);
     if (!can.allow) {
@@ -580,13 +590,26 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 403, 'permission_error', can.reason);
     }
 
+    const resourceClassJit = policy.decideResourceClassJit(kind, name, { reason: rawReason, riskLevel });
+    if (!resourceClassJit.allow) {
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: resourceClassJit.reason,
+        meta: { reason, riskLevel },
+      });
+      log.deny(`elevation.reject ${claims.sub} -> ${kind}:${name}: ${resourceClassJit.reason}`);
+      return sendError(res, 403, 'permission_error', resourceClassJit.reason);
+    }
+
     const maxTtl = policy.jitMaxTtl(claims.role);
-    const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : maxTtl, maxTtl);
+    const classMaxTtl = policy.resourceClassJitMaxTtl(kind, name);
+    const ttlLimit = classMaxTtl ? Math.min(maxTtl, classMaxTtl) : maxTtl;
+    const ttl = Math.min(body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : ttlLimit, ttlLimit);
     const { grant, claims: gc } = tokens.issueElevation(claims.sub, claims.role, { kind, name }, reason, ttl);
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'elevation.grant', resource: `${kind}:${name}`, decision: 'allow',
-      reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, exp: gc.exp },
+      reason: `JIT elevation (ttl=${ttl}s)`, meta: { reason, riskLevel, exp: gc.exp },
     });
     log.allow(`elevation.grant ${claims.sub} -> ${kind}:${name} (ttl=${ttl}s, reason="${reason}")`);
     return sendJson(res, 200, { elevation_grant: grant, expires_in: ttl, resource: { kind, name } });

@@ -76,6 +76,11 @@ export type EnterpriseResourceClass = {
   resources: string[];
   governance?: GovernanceBoundary;
   jitRequired?: boolean;
+  jit?: {
+    requireReason?: boolean;
+    maxTtlSeconds?: number;
+    allowedRiskLevels?: RiskLevel[];
+  };
 };
 
 export type EnterpriseGovernanceModel = {

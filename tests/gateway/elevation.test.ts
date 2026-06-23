@@ -59,6 +59,11 @@ async function makeHarness() {
           kind: 'tool',
           resources: ['email.send'],
           jitRequired: true,
+          jit: {
+            requireReason: true,
+            maxTtlSeconds: 45,
+            allowedRiskLevels: ['no_risk', 'low_risk'],
+          },
         },
       },
     },
@@ -139,11 +144,17 @@ describe('JIT elevation enforcement', () => {
       const elevation = await fetch(`${baseUrl}/v1/elevate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: ['Bearer', token].join(' ') },
-        body: JSON.stringify({ kind: 'tool', name: 'email.send', reason: 'customer update', ttlSeconds: 300 }),
+        body: JSON.stringify({
+          kind: 'tool',
+          name: 'email.send',
+          reason: 'customer update',
+          ttlSeconds: 300,
+          riskLevel: 'low_risk',
+        }),
       });
       const elevationBody = await elevation.json() as { elevation_grant: string; expires_in: number };
       expect(elevation.status).toBe(200);
-      expect(elevationBody.expires_in).toBe(60);
+      expect(elevationBody.expires_in).toBe(45);
 
       const allowed = await fetch(`${baseUrl}/v1/tools/email.send`, {
         method: 'POST',
@@ -183,6 +194,36 @@ describe('JIT elevation enforcement', () => {
       const deniedBody = await denied.json() as { error?: { message?: string } };
       expect(denied.status).toBe(403);
       expect(deniedBody.error?.message).toContain('resource mismatch');
+    } finally {
+      close();
+    }
+  });
+
+  it('enforces resource-class JIT reason and risk constraints', async () => {
+    const { baseUrl, token, close } = await makeHarness();
+    try {
+      const missingReason = await fetch(`${baseUrl}/v1/elevate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: ['Bearer', token].join(' ') },
+        body: JSON.stringify({ kind: 'tool', name: 'email.send', riskLevel: 'low_risk' }),
+      });
+      const missingReasonBody = await missingReason.json() as { error?: { message?: string } };
+      expect(missingReason.status).toBe(403);
+      expect(missingReasonBody.error?.message).toContain('requires an approval reason');
+
+      const highRisk = await fetch(`${baseUrl}/v1/elevate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: ['Bearer', token].join(' ') },
+        body: JSON.stringify({
+          kind: 'tool',
+          name: 'email.send',
+          reason: 'customer update',
+          riskLevel: 'high_risk',
+        }),
+      });
+      const highRiskBody = await highRisk.json() as { error?: { message?: string } };
+      expect(highRisk.status).toBe(403);
+      expect(highRiskBody.error?.message).toContain('high_risk is not allowed');
     } finally {
       close();
     }

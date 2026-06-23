@@ -206,4 +206,34 @@ export class PolicyEngine {
   jitMaxTtl(role: string): number {
     return this.policy.roles[role]?.jit?.maxTtlSeconds ?? 0;
   }
+
+  resourceClassJitMaxTtl(kind: 'model' | 'tool', name: string): number | undefined {
+    const ttl = this.resourceClassFor(kind, name)?.jit?.maxTtlSeconds;
+    return ttl && ttl > 0 ? ttl : undefined;
+  }
+
+  decideResourceClassJit(
+    kind: 'model' | 'tool',
+    name: string,
+    ctx: { reason: string; riskLevel?: RiskLevel },
+  ): Decision {
+    const resourceClass = this.resourceClassFor(kind, name);
+    const jit = resourceClass?.jit;
+    if (!jit) return { allow: true, reason: 'no resource-class JIT conditions' };
+
+    if (jit.requireReason && !ctx.reason.trim()) {
+      return { allow: false, reason: 'JIT: resource class requires an approval reason' };
+    }
+
+    if (jit.allowedRiskLevels?.length) {
+      if (!ctx.riskLevel) {
+        return { allow: false, reason: 'JIT: resource class requires a risk level' };
+      }
+      if (!jit.allowedRiskLevels.includes(ctx.riskLevel)) {
+        return { allow: false, reason: `JIT: risk ${ctx.riskLevel} is not allowed for resource class` };
+      }
+    }
+
+    return { allow: true, reason: 'resource-class JIT conditions satisfied' };
+  }
 }

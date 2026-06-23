@@ -53,7 +53,11 @@
           "projectId": "agentzt",
           "environment": "production"
         },
-        "jitRequired": true
+        "jitRequired": true,
+        "jit": {
+          "requireReason": true,
+          "maxTtlSeconds": 120
+        }
       }
     }
   },

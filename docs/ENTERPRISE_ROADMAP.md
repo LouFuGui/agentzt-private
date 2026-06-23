@@ -44,5 +44,6 @@ AgentZT Enterprise moves the current zero-trust gateway from a reference impleme
 - The enterprise policy model is currently a foundation contract; it does not replace `roles` enforcement yet.
 - Agent lifecycle denial is enforced now: `disabled` and `revoked` agents cannot receive new tokens, and already-issued tokens are rejected on use.
 - Organization, project, and environment boundaries can be attached to agents, roles, and resource classes; role boundary mismatches are denied at token issuance and token reuse, and agent boundaries are propagated into tokens and audit events.
+- Resource classes can govern JIT elevation with required approval reasons, class-level maximum TTLs, and optional allowed risk levels.
 - Policy state can be exported with `node src/cli/index.ts policy export` for GRC, SIEM, SOAR, or internal audit ingestion without exposing agent key material.
 - The demo is no longer treated as a full compatibility constraint; future demos can be redesigned around the enterprise control plane.
