@@ -109,3 +109,9 @@
   - 新增 `compose.yml`，支持 gateway 与可选 client profile，挂载 `config/` 与 `.agentzt/`。
   - 新增 Kubernetes gateway ConfigMap、Deployment、Service、PVC 示例。
   - 新增 `docs/OFFLINE_DEPLOYMENT.md` 记录镜像导出、Compose、Kubernetes 离线部署流程。
+
+### Milestone 5 离线部署续推进
+
+- 本轮继续推进 Milestone 5 的可验证性与交接安全：
+  - 新增 deployment artifact 静态测试，覆盖 Dockerfile dependency lock、Compose gateway/client 挂载、Kubernetes ConfigMap/Deployment/Service/PVC 与离线部署文档关键步骤。
+  - `docs/OFFLINE_DEPLOYMENT.md` 补充转移前 preflight，明确导出前运行测试/typecheck，并提醒不要夹带本地 API keys、跨环境私钥或不应外流的审计日志。

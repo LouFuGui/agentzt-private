@@ -14,6 +14,26 @@ docker save agentzt:local -o agentzt-local.tar
 Move `agentzt-local.tar`, `compose.yml`, `deploy/kubernetes/`, `config/`, and any prepared
 `.agentzt` runtime state into the offline environment.
 
+## Preflight before transfer
+
+Run the normal repository checks before exporting the image:
+
+```bash
+npm test
+npm run typecheck
+```
+
+Confirm the bundle contains only deployment inputs that can be published inside the target
+network:
+
+- the saved image tar;
+- `compose.yml` or the Kubernetes manifests;
+- sanitized `config/` files with public agent keys only;
+- `.agentzt/` runtime state only when it was intentionally generated for that environment.
+
+Do not include local API keys, private agent identities for other environments, or audit logs
+that should remain in the source environment.
+
 ## Run with Docker Compose
 
 ```bash
