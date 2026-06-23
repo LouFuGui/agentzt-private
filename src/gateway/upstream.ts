@@ -123,7 +123,6 @@ async function passthroughModel(
     if (err instanceof UpstreamConfigurationError) {
       return {
         status: 502,
-        provider: provider.name,
         body: {
           type: 'error',
           error: {
@@ -139,6 +138,7 @@ async function passthroughModel(
   if (!apiKey) {
     return {
       status: 502,
+      provider: provider.name,
       body: {
         type: 'error',
         error: {
