@@ -92,12 +92,17 @@ async function makeHarness() {
     createdAt: new Date().toISOString(),
   });
   const gateway = await createGatewayServer();
-  const baseUrl = `http://127.0.0.1:${gateway.port}`;
+  await new Promise<void>((resolve) => {
+    gateway.server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const address = gateway.server.address();
+  if (!address || typeof address === 'string') throw new Error('gateway did not bind a TCP port');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
   const tokenResp = await fetch(`${baseUrl}/v1/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      client_assertion: identity.makeAssertion('agentzt-gateway/v1/token'),
+      assertion: identity.makeAssertion('agentzt-gateway/v1/token'),
     }),
   });
   const tokenBody = await tokenResp.json() as { access_token: string };
