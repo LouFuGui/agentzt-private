@@ -49,7 +49,7 @@ function cleanBoundary(boundary?: GovernanceBoundary): GovernanceBoundary | unde
   return Object.keys(clean).length ? clean : undefined;
 }
 
-function boundaryMismatch(required: GovernanceBoundary, actual?: GovernanceBoundary): string | null {
+function validateBoundaryMatch(required: GovernanceBoundary, actual?: GovernanceBoundary): string | null {
   if (required.organizationId && required.organizationId !== actual?.organizationId) {
     return `organization "${actual?.organizationId ?? 'unassigned'}" does not match "${required.organizationId}"`;
   }
@@ -108,7 +108,7 @@ export class PolicyEngine {
     if (!required) return { allow: true, reason: 'no role governance boundary' };
 
     const actual = cleanBoundary(entry.governance);
-    const mismatch = boundaryMismatch(required, actual);
+    const mismatch = validateBoundaryMatch(required, actual);
     if (mismatch) {
       return { allow: false, reason: `governance boundary mismatch: ${mismatch}` };
     }

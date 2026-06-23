@@ -8,7 +8,7 @@ import type { GovernanceBoundary } from '../../src/shared/types.ts';
 const roots: string[] = [];
 type GovernanceHarness = { agent?: GovernanceBoundary; role?: GovernanceBoundary };
 
-function writeJson(path: string, value: unknown): void {
+function writeJsonFile(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 
@@ -70,9 +70,9 @@ async function makeHarness(
       },
     },
   };
-  writeJson(join(root, 'config', 'gateway.json'), cfg);
-  writeJson(join(root, 'config', 'policy.json'), policy);
-  writeJson(join(root, 'config', 'agents.json'), {
+  writeJsonFile(join(root, 'config', 'gateway.json'), cfg);
+  writeJsonFile(join(root, 'config', 'policy.json'), policy);
+  writeJsonFile(join(root, 'config', 'agents.json'), {
     agents: [{
       agentId,
       role,
@@ -135,7 +135,7 @@ describe('agent lifecycle enforcement', () => {
     expect(issued.ok).toBe(true);
     if (!issued.ok) throw new Error(issued.reason);
 
-    writeJson(join(root, 'config', 'agents.json'), {
+    writeJsonFile(join(root, 'config', 'agents.json'), {
       agents: [{
         agentId,
         role: 'demo-agent',
@@ -180,7 +180,7 @@ describe('agent lifecycle enforcement', () => {
     if (!issued.ok) throw new Error(issued.reason);
     expect(issued.claims.governance).toEqual(governance.agent);
 
-    writeJson(join(root, 'config', 'agents.json'), {
+    writeJsonFile(join(root, 'config', 'agents.json'), {
       agents: [{
         agentId,
         role: 'demo-agent',
