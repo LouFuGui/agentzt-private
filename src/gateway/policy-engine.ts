@@ -51,13 +51,13 @@ function cleanBoundary(boundary?: GovernanceBoundary): GovernanceBoundary | unde
 
 function validateBoundaryMatch(required: GovernanceBoundary, actual?: GovernanceBoundary): string | null {
   if (required.organizationId && required.organizationId !== actual?.organizationId) {
-    return `organization "${actual?.organizationId ?? 'unassigned'}" does not match "${required.organizationId}"`;
+    return `organization "${actual?.organizationId || 'unassigned'}" does not match "${required.organizationId}"`;
   }
   if (required.projectId && required.projectId !== actual?.projectId) {
-    return `project "${actual?.projectId ?? 'unassigned'}" does not match "${required.projectId}"`;
+    return `project "${actual?.projectId || 'unassigned'}" does not match "${required.projectId}"`;
   }
   if (required.environment && required.environment !== actual?.environment) {
-    return `environment "${actual?.environment ?? 'unassigned'}" does not match "${required.environment}"`;
+    return `environment "${actual?.environment || 'unassigned'}" does not match "${required.environment}"`;
   }
   return null;
 }
