@@ -18,6 +18,10 @@ export function loadPolicy(): PolicyDoc {
   return readJsonFile<PolicyDoc>(POLICY_FILE);
 }
 
+export function savePolicy(policy: PolicyDoc): void {
+  writeFileSync(POLICY_FILE, JSON.stringify(policy, null, 2) + '\n');
+}
+
 export function loadGatewayConfig(): GatewayConfig {
   return readJsonFile<GatewayConfig>(GATEWAY_CONFIG_FILE);
 }

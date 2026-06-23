@@ -2,12 +2,20 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { IDENTITIES_DIR, AUDIT_DIR } from '../shared/paths.ts';
 import { generateEd25519, newId } from '../shared/crypto.ts';
-import { loadRegistry, saveRegistry, loadPolicy } from '../shared/config.ts';
+import { loadRegistry, saveRegistry, loadPolicy, savePolicy } from '../shared/config.ts';
 import { verifyChain } from '../shared/audit.ts';
 import { AuditLogger } from '../shared/audit.ts';
 import { caInit, issueClientCert } from './tls.ts';
 import { exportPolicyState } from '../gateway/policy-export.ts';
-import type { AgentIdentityFile, AgentLifecycleStatus, AgentRegistryEntry, AuditAction } from '../shared/types.ts';
+import { defaultEnterprisePolicy } from '../gateway/policy-engine.ts';
+import type {
+  AgentIdentityFile,
+  AgentLifecycleStatus,
+  AgentRegistryEntry,
+  AuditAction,
+  EnterpriseResourceClass,
+  PolicyDoc,
+} from '../shared/types.ts';
 
 function flag(args: string[], name: string): string | undefined {
   const idx = args.indexOf(name);
@@ -22,6 +30,10 @@ Usage:
   node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>] | role --agent <id> --role <role> [--reason <text>] | rotate-key --agent <id> [--reason <text>] [--mtls]]
   node src/cli/index.ts audit [--limit N | --verify]
   node src/cli/index.ts policy export
+  node src/cli/index.ts policy role grant --role <role> [--models a,b] [--tools x,y] [--reason <text>]
+  node src/cli/index.ts policy resource-class set --name <name> --kind model|tool --resources a,b [--jit-required true|false] [--description <text>] [--reason <text>]
+  node src/cli/index.ts policy lifecycle deny-statuses --statuses active,disabled,revoked [--reason <text>]
+  node src/cli/index.ts policy jit set --role <role> [--models a,b] [--tools x,y] [--ttl seconds] [--reason <text>]
   node src/cli/index.ts roles
   node src/cli/index.ts tls init [--force]
   node src/cli/index.ts tls issue --agent <id>
@@ -33,7 +45,7 @@ Commands:
   agents   List registered agent identities, or disable/revoke/change role/rotate key with audit.
   roles    List roles defined in config/policy.json.
   audit    Print recent gateway audit events, or --verify the hash chain.
-  policy   Export policy state for GRC/SIEM/SOAR ingestion.
+  policy   Export or mutate policy state with tamper-evident audit events.
   tls      Manage mutual-TLS PKI: 'init' creates the CA + gateway server cert,
            'issue --agent <id>' issues a client cert (requires openssl).
 `);
@@ -61,6 +73,55 @@ function recordLifecycleAudit(action: AuditAction, entry: AgentRegistryEntry, re
       status: agentStatus(entry),
     },
   });
+}
+
+function recordPolicyAudit(action: AuditAction, resource: string, reason: string, meta: Record<string, unknown>): void {
+  const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
+  audit.record({
+    requestId: newId('cli'),
+    agentId: null,
+    role: null,
+    action,
+    resource,
+    decision: 'allow',
+    reason,
+    meta,
+  });
+}
+
+function csv(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value.split(',').map((part) => part.trim()).filter(Boolean);
+}
+
+function mergeUnique(existing: string[], additions: string[] | undefined): string[] {
+  if (!additions) return existing;
+  return [...new Set([...existing, ...additions])].sort();
+}
+
+function parseBoolean(value: string | undefined, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(`error: ${name} must be true or false`);
+  process.exit(1);
+}
+
+function parsePositiveInt(value: string | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    console.error(`error: ${name} must be a positive integer`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
+function ensureEnterprise(policy: PolicyDoc): NonNullable<PolicyDoc['enterprise']> {
+  policy.enterprise ??= defaultEnterprisePolicy();
+  policy.enterprise.agentLifecycle ??= { denyStatuses: ['disabled', 'revoked'] };
+  policy.enterprise.resourceClasses ??= {};
+  return policy.enterprise;
 }
 
 function identityPath(agentId: string): string {
@@ -322,11 +383,152 @@ function cmdRoles(): void {
 
 function cmdPolicy(args: string[]): void {
   const sub = args[0];
-  if (sub !== 'export') {
-    console.error('usage: node src/cli/index.ts policy export');
+  if (sub === 'export') {
+    console.log(JSON.stringify(exportPolicyState(loadPolicy(), loadRegistry()), null, 2));
+    return;
+  }
+  if (sub === 'role' && args[1] === 'grant') {
+    cmdPolicyRoleGrant(args.slice(2));
+    return;
+  }
+  if (sub === 'resource-class' && args[1] === 'set') {
+    cmdPolicyResourceClassSet(args.slice(2));
+    return;
+  }
+  if (sub === 'lifecycle' && args[1] === 'deny-statuses') {
+    cmdPolicyLifecycleDenyStatuses(args.slice(2));
+    return;
+  }
+  if (sub === 'jit' && args[1] === 'set') {
+    cmdPolicyJitSet(args.slice(2));
+    return;
+  }
+  console.error('usage: node src/cli/index.ts policy export | role grant | resource-class set | lifecycle deny-statuses | jit set');
+  process.exit(1);
+}
+
+function cmdPolicyRoleGrant(args: string[]): void {
+  const roleName = flag(args, '--role');
+  const models = csv(flag(args, '--models'));
+  const tools = csv(flag(args, '--tools'));
+  const reason = flag(args, '--reason');
+  if (!roleName || (!models && !tools)) {
+    console.error('error: policy role grant requires --role <role> and at least one of --models or --tools');
     process.exit(1);
   }
-  console.log(JSON.stringify(exportPolicyState(loadPolicy(), loadRegistry()), null, 2));
+
+  const policy = loadPolicy();
+  const role = policy.roles[roleName];
+  if (!role) {
+    console.error(`error: role "${roleName}" is not defined in config/policy.json`);
+    process.exit(1);
+  }
+  const before = { models: [...role.models], tools: [...role.tools] };
+  role.models = mergeUnique(role.models, models);
+  role.tools = mergeUnique(role.tools, tools);
+  savePolicy(policy);
+
+  recordPolicyAudit(
+    'policy.role_grant.change',
+    `role:${roleName}`,
+    reason ?? `role "${roleName}" grants changed`,
+    { before, after: { models: role.models, tools: role.tools }, addedModels: models ?? [], addedTools: tools ?? [] },
+  );
+  console.log(`updated grants for role "${roleName}"`);
+}
+
+function cmdPolicyResourceClassSet(args: string[]): void {
+  const name = flag(args, '--name');
+  const kind = flag(args, '--kind');
+  const resources = csv(flag(args, '--resources'));
+  const jitRequired = parseBoolean(flag(args, '--jit-required'), '--jit-required');
+  const description = flag(args, '--description');
+  const reason = flag(args, '--reason');
+  if (!name || (kind !== 'model' && kind !== 'tool') || !resources?.length) {
+    console.error('error: policy resource-class set requires --name <name> --kind model|tool --resources a,b');
+    process.exit(1);
+  }
+
+  const policy = loadPolicy();
+  const enterprise = ensureEnterprise(policy);
+  const before = enterprise.resourceClasses?.[name] ?? null;
+  const next: EnterpriseResourceClass = {
+    ...(before ?? {}),
+    kind,
+    resources,
+  };
+  if (description !== undefined) next.description = description;
+  if (jitRequired !== undefined) next.jitRequired = jitRequired;
+  enterprise.resourceClasses![name] = next;
+  savePolicy(policy);
+
+  recordPolicyAudit(
+    'policy.resource_class.change',
+    `resource-class:${name}`,
+    reason ?? `resource class "${name}" changed`,
+    { before, after: next },
+  );
+  console.log(`set resource class "${name}"`);
+}
+
+function cmdPolicyLifecycleDenyStatuses(args: string[]): void {
+  const statuses = csv(flag(args, '--statuses')) as AgentLifecycleStatus[] | undefined;
+  const reason = flag(args, '--reason');
+  const valid = new Set(['active', 'disabled', 'revoked']);
+  if (!statuses?.length || statuses.some((status) => !valid.has(status))) {
+    console.error('error: policy lifecycle deny-statuses requires --statuses active,disabled,revoked');
+    process.exit(1);
+  }
+
+  const policy = loadPolicy();
+  const enterprise = ensureEnterprise(policy);
+  const before = [...enterprise.agentLifecycle.denyStatuses];
+  enterprise.agentLifecycle.denyStatuses = [...new Set(statuses)].sort();
+  savePolicy(policy);
+
+  recordPolicyAudit(
+    'policy.lifecycle_rule.change',
+    'policy:agent-lifecycle',
+    reason ?? 'agent lifecycle deny statuses changed',
+    { before: { denyStatuses: before }, after: { denyStatuses: enterprise.agentLifecycle.denyStatuses } },
+  );
+  console.log(`set lifecycle deny statuses: ${enterprise.agentLifecycle.denyStatuses.join(', ')}`);
+}
+
+function cmdPolicyJitSet(args: string[]): void {
+  const roleName = flag(args, '--role');
+  const models = csv(flag(args, '--models'));
+  const tools = csv(flag(args, '--tools'));
+  const ttl = parsePositiveInt(flag(args, '--ttl'), '--ttl');
+  const reason = flag(args, '--reason');
+  if (!roleName || (!models && !tools && ttl === undefined)) {
+    console.error('error: policy jit set requires --role <role> and at least one of --models, --tools, or --ttl');
+    process.exit(1);
+  }
+
+  const policy = loadPolicy();
+  const role = policy.roles[roleName];
+  if (!role) {
+    console.error(`error: role "${roleName}" is not defined in config/policy.json`);
+    process.exit(1);
+  }
+  const before = role.jit ? { ...role.jit } : null;
+  role.jit = {
+    elevatableModels: models ?? role.jit?.elevatableModels,
+    elevatableTools: tools ?? role.jit?.elevatableTools,
+    maxTtlSeconds: ttl ?? role.jit?.maxTtlSeconds ?? 300,
+  };
+  if (!role.jit.elevatableModels?.length) delete role.jit.elevatableModels;
+  if (!role.jit.elevatableTools?.length) delete role.jit.elevatableTools;
+  savePolicy(policy);
+
+  recordPolicyAudit(
+    'policy.jit_config.change',
+    `role:${roleName}:jit`,
+    reason ?? `role "${roleName}" JIT config changed`,
+    { before, after: role.jit },
+  );
+  console.log(`set JIT config for role "${roleName}"`);
 }
 
 function cmdAudit(args: string[]): void {
