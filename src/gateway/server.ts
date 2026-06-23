@@ -64,6 +64,7 @@ import { routeQuotaApi } from '../api/quota.ts';
 import { routeStatsApi } from '../api/stats.ts';
 import { routeTierApi } from '../api/tier.ts';
 import { routeAlertsApi } from '../api/alerts.ts';
+import { routeManagementApi } from '../api/management.ts';
 import { AuthApi, createAuthApi, SessionTokenService } from '../api/auth.ts';
 import { setSessionTokenService } from '../api/session.ts';
 import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '../shared/signoz.ts';
@@ -487,6 +488,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         if (await routeTierApi(req, res)) return;
         // Alert management
         if (await routeAlertsApi(req, res)) return;
+        // Enterprise management (projects, agents, roles, policy, audit)
+        if (await routeManagementApi(req, res)) return;
         return sendError(res, 404, 'not_found', `no route for ${method} ${path}`);
       }
 
