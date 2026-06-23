@@ -12,6 +12,7 @@ export type ModelResponse = {
   status: number;
   body: unknown;
   usage?: { input_tokens?: number; output_tokens?: number };
+  provider?: string;
 };
 
 type UpstreamProviderConfig = NonNullable<GatewayConfig['upstream']['providers']>[string];
@@ -26,6 +27,13 @@ type CompiledRoute = {
   priority: number;
   regex: RegExp;
 };
+
+class UpstreamConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UpstreamConfigurationError';
+  }
+}
 
 function estimateTokens(obj: unknown): number {
   return Math.ceil(JSON.stringify(obj ?? '').length / 4);
@@ -72,8 +80,10 @@ export function resolveUpstreamProvider(cfg: GatewayConfig, model: string): Reso
     .filter((candidate) => candidate.regex.test(model))
     .sort((a, b) => a.priority - b.priority)[0];
   const providerName = route?.provider ?? cfg.upstream.defaultProvider ?? 'anthropic';
-  const provider = providers[providerName] ?? providers['anthropic'];
-  if (!provider) throw new Error('anthropic upstream provider is not configured');
+  const provider = providers[providerName];
+  if (!provider) {
+    throw new UpstreamConfigurationError(`upstream provider "${providerName}" is not configured`);
+  }
   return provider;
 }
 
@@ -87,6 +97,7 @@ function mockModel(req: ModelRequest): ModelResponse {
   const outputTokens = estimateTokens(text);
   return {
     status: 200,
+    provider: 'mock',
     usage: { input_tokens: inputTokens, output_tokens: outputTokens },
     body: {
       id: newId('msg'),
@@ -105,7 +116,24 @@ async function passthroughModel(
   cfg: GatewayConfig,
   req: ModelRequest,
 ): Promise<ModelResponse> {
-  const provider = resolveUpstreamProvider(cfg, req.model);
+  let provider: ResolvedProvider;
+  try {
+    provider = resolveUpstreamProvider(cfg, req.model);
+  } catch (err) {
+    if (err instanceof UpstreamConfigurationError) {
+      return {
+        status: 502,
+        body: {
+          type: 'error',
+          error: {
+            type: 'upstream_misconfigured',
+            message: err.message,
+          },
+        },
+      };
+    }
+    throw err;
+  }
   const apiKey = await getModelApiKeyFromVault(cfg.vault, provider.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -146,7 +174,7 @@ async function callAnthropic(
   const usage = (body as Record<string, unknown>)['usage'] as
     | { input_tokens?: number; output_tokens?: number }
     | undefined;
-  return { status: resp.status, body, usage };
+  return { status: resp.status, body, usage, provider: provider.name };
 }
 
 async function callDeepSeek(
@@ -167,12 +195,13 @@ async function callDeepSeek(
   const body = await resp.json().catch(() => ({}));
   const usage = openAiUsage(body);
   if (req.protocol === 'openai-chat') {
-    return { status: resp.status, body, usage };
+    return { status: resp.status, body, usage, provider: provider.name };
   }
   return {
     status: resp.status,
     body: resp.ok ? toAnthropicMessage(body, req.model) : body,
     usage,
+    provider: provider.name,
   };
 }
 

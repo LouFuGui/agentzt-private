@@ -868,6 +868,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       reason: decision.reason, latencyMs,
       meta: {
         authVia: authz.via,
+        upstreamProvider: result.provider,
         upstreamStatus: result.status,
         usage: result.usage,
         maxTokens: body['max_tokens'],
@@ -1133,6 +1134,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       score: (inputVerdict?.flagged ? 0.5 : 0) + (outputVerdict?.flagged ? 0.5 : 0),
       meta: {
         targetPath,
+        upstreamProvider: result.provider,
         upstreamStatus: result.status,
         usage: result.usage,
         guardrailProvider: appGuard.name,
@@ -1412,6 +1414,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         // Privacy: Only store counts, not content
         promptTokens,
         completionTokens,
+        upstreamProvider: result.provider,
         guardrailProvider: appGuard.name,
         inputFlagged: inputVerdict?.flagged,
         outputFlagged: outputVerdict?.flagged,

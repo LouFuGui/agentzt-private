@@ -37,3 +37,11 @@
   - 支持 `deepseek-*` 模型路由到 DeepSeek-compatible `/chat/completions`。
   - 支持默认公网 DeepSeek API 与可配置内网 DeepSeek-compatible `baseUrl`。
   - API Key 仍只由 gateway 侧从 env/Vault 读取，agent 侧不持有模型密钥。
+
+### Milestone 2 续开发
+
+- 已验证当前主 `callModel` 路径具备 provider routing、DeepSeek-compatible `/chat/completions` 转发、mock 离线模式和 Vault/env 网关侧密钥读取。
+- 本轮补强方向：
+  - 在 upstream response 与审计 meta 中记录实际 provider，方便确认 `deepseek-*` 是否命中 DeepSeek provider。
+  - provider route 指向未配置 provider 时 fail closed，返回 `upstream_misconfigured`，避免静默回退到 Anthropic。
+  - 补充 mock 离线、未知 provider、DeepSeek 自定义 `baseUrl` 的测试覆盖。

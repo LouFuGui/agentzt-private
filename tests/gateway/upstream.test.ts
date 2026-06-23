@@ -29,6 +29,45 @@ describe('upstream provider routing', () => {
     expect(resolveUpstreamProvider(config(), 'deepseek-prod/admin').name).toBe('anthropic');
   });
 
+  it('keeps mock mode offline and reports the mock provider', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await callModel(config({ mode: 'mock' }), {
+      model: 'deepseek-chat',
+      body: {
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.provider).toBe('mock');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a route references an unknown provider', async () => {
+    const result = await callModel(config({
+      routes: [{ pattern: 'internal-*', provider: 'missing-provider', priority: 1 }],
+    }), {
+      model: 'internal-qwen-32b',
+      body: {
+        model: 'internal-qwen-32b',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 502,
+      body: {
+        error: {
+          type: 'upstream_misconfigured',
+          message: 'upstream provider "missing-provider" is not configured',
+        },
+      },
+    });
+  });
+
   it('honors configured provider routes and DeepSeek baseUrl', async () => {
     vi.stubEnv('CUSTOM_DEEPSEEK_KEY', 'test-deepseek-key');
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -60,6 +99,7 @@ describe('upstream provider routing', () => {
     });
 
     expect(result.status).toBe(200);
+    expect(result.provider).toBe('internal');
     expect(result.body).toMatchObject({
       type: 'message',
       model: 'internal-qwen-32b',
@@ -100,6 +140,7 @@ describe('upstream provider routing', () => {
     });
 
     expect(result.body).toEqual(body);
+    expect(result.provider).toBe('deepseek');
     expect(result.usage).toEqual({ input_tokens: 2, output_tokens: 3 });
   });
 });
