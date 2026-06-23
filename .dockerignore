@@ -1,0 +1,10 @@
+.agentzt
+node_modules
+npm-debug.log*
+*.log
+.git
+.gitignore
+Dockerfile
+compose.yml
+deploy
+coverage
