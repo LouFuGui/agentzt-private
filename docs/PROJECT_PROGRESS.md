@@ -45,3 +45,11 @@
   - 在 upstream response 与审计 meta 中记录实际 provider，方便确认 `deepseek-*` 是否命中 DeepSeek provider。
   - provider route 指向未配置 provider 时 fail closed，返回 `upstream_misconfigured`，避免静默回退到 Anthropic。
   - 补充 mock 离线、未知 provider、DeepSeek 自定义 `baseUrl` 的测试覆盖。
+
+### Milestone 2 续开发补强
+
+- 保留 upstream provider misconfiguration 的 provider metadata：当已解析 provider 但缺少对应企业 API key 时，`callModel()` 的 502 响应也会携带 `provider`，便于审计链确认命中的 provider。
+- 修复 Direct Model Access `/v1/chat/completions` 对 upstream 失败的处理：DeepSeek/provider misconfiguration 等非 200 响应现在会原样以对应 HTTP status 返回，不再包装为空的 OpenAI 成功响应。
+- 新增覆盖：
+  - upstream 已选中 provider 但缺少 key 时返回 `upstream_misconfigured` 并保留 provider。
+  - Direct Model Access 遇到未知 provider route 时 fail closed 返回 502。

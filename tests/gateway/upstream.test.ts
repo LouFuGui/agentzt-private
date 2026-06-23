@@ -68,6 +68,25 @@ describe('upstream provider routing', () => {
     });
   });
 
+  it('reports the selected provider when its key is missing', async () => {
+    const result = await callModel(config(), {
+      model: 'deepseek-chat',
+      body: {
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(result.status).toBe(502);
+    expect(result.provider).toBe('deepseek');
+    expect(result.body).toMatchObject({
+      error: {
+        type: 'upstream_misconfigured',
+        message: 'passthrough mode requires the deepseek enterprise key in env AGENTZT_UPSTREAM_DEEPSEEK_KEY',
+      },
+    });
+  });
+
   it('honors configured provider routes and DeepSeek baseUrl', async () => {
     vi.stubEnv('CUSTOM_DEEPSEEK_KEY', 'test-deepseek-key');
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({

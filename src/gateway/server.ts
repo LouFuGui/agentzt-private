@@ -1351,6 +1351,30 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     // Call model (privacy: content not logged)
     const result = await callModel(cfg, { model: body.model, body: { ...body }, protocol: 'openai-chat' });
     const latencyMs = Date.now() - started;
+    if (result.status !== 200) {
+      recordAudit({
+        requestId: rid,
+        agentId: null,
+        role: null,
+        appId: app.appId,
+        userId: app.ownerId,
+        action: 'direct.call',
+        resource: body.model,
+        decision: 'deny',
+        reason: 'upstream model call failed',
+        latencyMs,
+        categories: inputVerdict.categories,
+        score: inputVerdict.flagged ? 0.5 : 0,
+        meta: {
+          upstreamProvider: result.provider,
+          upstreamStatus: result.status,
+          guardrailProvider: appGuard.name,
+          inputFlagged: inputVerdict.flagged,
+        },
+      });
+      log.deny(`direct.call -> ${body.model}: upstream status ${result.status}`);
+      return sendJson(res, result.status, result.body, { [REQUEST_ID_HEADER]: rid });
+    }
 
     // Process output
     let outputContent = extractText(result.body);
