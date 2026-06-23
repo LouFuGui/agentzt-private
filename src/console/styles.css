@@ -117,7 +117,8 @@ button:hover,
 
 .tabs,
 .section-head,
-.inline-form {
+.inline-form,
+.actions {
   display: flex;
   gap: 10px;
   align-items: center;

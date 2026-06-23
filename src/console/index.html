@@ -101,7 +101,10 @@
         <section id="audit" class="view panel">
           <div class="section-head">
             <h2>Audit viewer</h2>
-            <button data-refresh="audit" type="button">Refresh</button>
+            <div class="actions">
+              <button id="export-audit" type="button">Export JSON</button>
+              <button data-refresh="audit" type="button">Refresh</button>
+            </div>
           </div>
           <form id="audit-filter" class="inline-form">
             <input name="agentId" placeholder="agentId">

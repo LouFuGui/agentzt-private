@@ -43,10 +43,12 @@ describe('minimal web console', () => {
     expect(html.type).toContain('text/html');
     expect(html.body).toContain('AgentZT Console');
     expect(html.body).toContain('login-form');
+    expect(html.body).toContain('export-audit');
     expect(js.status).toBe(200);
     expect(js.type).toContain('text/javascript');
     expect(js.body).toContain('/api/auth/login');
     expect(js.body).toContain('/api/v1/agents');
+    expect(js.body).toContain('URL.createObjectURL');
     expect(css.status).toBe(200);
     expect(css.type).toContain('text/css');
   });

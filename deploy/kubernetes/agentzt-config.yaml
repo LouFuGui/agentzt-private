@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentzt-config
+data:
+  gateway.json: |
+    {
+      "port": 8700,
+      "issuer": "agentzt-gateway",
+      "tokenTtlSeconds": 300,
+      "assertionMaxAgeSeconds": 60,
+      "upstream": {
+        "mode": "mock",
+        "defaultProvider": "anthropic",
+        "providers": {
+          "anthropic": {
+            "type": "anthropic",
+            "baseUrl": "https://api.anthropic.com",
+            "apiKeyEnv": "AGENTZT_UPSTREAM_ANTHROPIC_KEY"
+          },
+          "deepseek": {
+            "type": "deepseek",
+            "baseUrl": "https://api.deepseek.com/v1",
+            "apiKeyEnv": "AGENTZT_UPSTREAM_DEEPSEEK_KEY",
+            "defaultModel": "deepseek-chat"
+          }
+        },
+        "routes": [
+          { "pattern": "deepseek-*", "provider": "deepseek", "priority": 10 },
+          { "pattern": "claude-*", "provider": "anthropic", "priority": 20 },
+          { "pattern": "*", "provider": "anthropic", "priority": 99 }
+        ]
+      },
+      "guardrails": {
+        "provider": "auto",
+        "input": { "mode": "block" },
+        "output": { "redactSecrets": true, "check": true }
+      },
+      "opa": { "enabled": false, "baseUrl": "http://localhost:8181", "policyPath": "agentzt/authz/decision", "timeoutMs": 1000, "failOpen": false },
+      "signoz": { "enabled": false, "endpoint": "http://localhost:4318", "serviceName": "agentzt-gateway", "timeoutMs": 3000, "exportIntervalMs": 0 },
+      "tls": { "enabled": false, "keyFile": ".agentzt/tls/server.key", "certFile": ".agentzt/tls/server.crt", "caFile": ".agentzt/tls/ca.crt", "channelBinding": true },
+      "sandbox": { "enabled": false, "baseUrl": "http://localhost:8080", "autoStart": false },
+      "temporal": { "enabled": false, "baseUrl": "http://localhost:7243/api/v1", "namespace": "default", "defaultTaskQueue": "agentzt-tasks", "timeoutMs": 5000, "apiKeyEnv": "TEMPORAL_API_KEY" },
+      "falco": { "enabled": false, "webhookPath": "/v1/falco/events", "sharedSecretEnv": "AGENTZT_FALCO_SECRET", "minimumPriority": "warning", "denyWindowSeconds": 300, "maxEvents": 1000, "agentIdFields": ["agentzt.agent_id", "container.name", "k8s.pod.name"] }
+    }
+  policy.json: |
+    {
+      "version": 1,
+      "defaultDeny": true,
+      "enterprise": {
+        "version": 1,
+        "agentLifecycle": { "denyStatuses": ["disabled", "revoked"] },
+        "decisionOrder": ["mtls", "token", "agent_lifecycle", "runtime_signal", "rbac_or_jit", "rate_limit", "input_guardrail", "abac", "opa", "execution", "output_guardrail"],
+        "governance": {
+          "organizationIds": ["openguardrails"],
+          "projectIds": ["agentzt"],
+          "environments": ["development", "test", "production"]
+        }
+      },
+      "roles": {
+        "demo-agent": {
+          "models": ["claude-sonnet-4-6", "deepseek-chat"],
+          "tools": ["kb.search", "db.query", "web.fetch"],
+          "limits": { "maxOutputTokens": 1024, "requestsPerMinute": 60 },
+          "jit": { "elevatableTools": ["email.send"], "maxTtlSeconds": 120 }
+        }
+      }
+    }
+  agents.json: |
+    {
+      "_comment": "Populate with public agent keys before deploying, or mount a Secret-backed agents.json.",
+      "agents": []
+    }

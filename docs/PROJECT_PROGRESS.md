@@ -97,3 +97,15 @@
   - 控制台支持登录、Agent 管理、Project 管理、Role/Policy 查看编辑、Audit 查询查看。
   - 控制台复用 Milestone 3 的 `/api/auth/*` 与 `/api/v1/*` 管理 API，不新增独立后端状态。
 - 本轮基线验证：安装依赖前 `npm test` 因 `vitest` 缺失失败、`npm run typecheck` 因 `@types/node` 缺失失败；`npm ci` 后 `npm test` 与 `npm run typecheck` 均通过。
+
+### Milestone 4 收尾与 Milestone 5 启动
+
+- 本轮继续推进并完成 Milestone 4（最小 Web 控制台）缺口：
+  - Audit viewer 新增 JSON 导出按钮，覆盖“Audit 查看与导出”交付。
+  - 控制台测试补充导出入口与浏览器下载实现的静态契约检查。
+- 当前判断：Milestone 4 的 login、Agent/Project/Role/Policy 管理、Audit 查看与导出、静态 console 入口已达到计划书最小交付范围。
+- 已进入 Milestone 5（离线私有化部署）最小交付：
+  - 新增 dependency-locked `Dockerfile`，保持 Node 22 原生 TypeScript 运行、无构建步骤。
+  - 新增 `compose.yml`，支持 gateway 与可选 client profile，挂载 `config/` 与 `.agentzt/`。
+  - 新增 Kubernetes gateway ConfigMap、Deployment、Service、PVC 示例。
+  - 新增 `docs/OFFLINE_DEPLOYMENT.md` 记录镜像导出、Compose、Kubernetes 离线部署流程。

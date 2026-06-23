@@ -159,6 +159,18 @@ async function loadAudit(form = new FormData(document.querySelector('#audit-filt
   document.querySelector('#audit-output').textContent = json(data);
 }
 
+function exportAudit() {
+  const output = document.querySelector('#audit-output').textContent || '{}';
+  const blob = new Blob([output + '\n'], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `agentzt-audit-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+}
+
 async function refreshAll() {
   await Promise.all([loadAgents(), loadProjects(), loadPolicy(), loadAudit()]);
   setStatus('Console data loaded');
@@ -282,6 +294,15 @@ document.querySelector('#save-policy').addEventListener('click', async () => {
     await api('/api/v1/policy', { method: 'PUT', body: JSON.stringify(policy) });
     await loadPolicy();
     setStatus('Policy saved');
+  } catch (err) {
+    setStatus(err.message, false);
+  }
+});
+
+document.querySelector('#export-audit').addEventListener('click', () => {
+  try {
+    exportAudit();
+    setStatus('Audit exported');
   } catch (err) {
     setStatus(err.message, false);
   }
