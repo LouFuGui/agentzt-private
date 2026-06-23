@@ -115,6 +115,22 @@ export class PolicyEngine {
     return { allow: true, reason: 'governance boundary satisfied' };
   }
 
+  decideResourceGovernance(
+    kind: 'model' | 'tool',
+    name: string,
+    actual?: GovernanceBoundary,
+  ): Decision {
+    const resourceClass = this.resourceClassFor(kind, name);
+    const required = cleanBoundary(resourceClass?.governance);
+    if (!required) return { allow: true, reason: 'no resource governance boundary' };
+
+    const mismatch = validateBoundaryMatch(required, cleanBoundary(actual));
+    if (mismatch) {
+      return { allow: false, reason: `resource governance boundary mismatch: ${mismatch}` };
+    }
+    return { allow: true, reason: 'resource governance boundary satisfied' };
+  }
+
   /** Models/tools an agent in this role may use — used to scope its token. */
   scopeForRole(role: string): { models: string[]; tools: string[] } {
     const r = this.policy.roles[role];

@@ -579,6 +579,17 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const reason = rawReason || 'unspecified';
     const riskLevel = parseRiskLevel(body.riskLevel);
 
+    const resourceGovernance = policy.decideResourceGovernance(kind, name, claims.governance);
+    if (!resourceGovernance.allow) {
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'elevation.reject', resource: `${kind}:${name}`, decision: 'deny', reason: resourceGovernance.reason,
+        meta: { reason },
+      });
+      log.deny(`elevation.reject ${claims.sub} -> ${kind}:${name}: ${resourceGovernance.reason}`);
+      return sendError(res, 403, 'permission_error', resourceGovernance.reason);
+    }
+
     const can = policy.canElevate(claims.role, kind, name);
     if (!can.allow) {
       recordAudit({
@@ -626,6 +637,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     const inScope = scopeList.includes('*') || scopeList.includes(name);
     const base = kind === 'model' ? policy.decideModel(claims.role, name) : policy.decideTool(claims.role, name);
     const resourceClass = policy.resourceClassFor(kind, name);
+    const resourceGovernance = policy.decideResourceGovernance(kind, name, claims.governance);
+    if (!resourceGovernance.allow) return { allow: false, reason: resourceGovernance.reason, via: 'scope' };
     const jitRequired = resourceClass?.jitRequired === true;
     if (inScope && base.allow && !jitRequired) return { allow: true, reason: base.reason, via: 'scope' };
 
