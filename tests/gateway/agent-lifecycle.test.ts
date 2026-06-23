@@ -195,7 +195,7 @@ describe('agent lifecycle enforcement', () => {
     expect(() => tokens.verifyAccessToken(issued.token)).toThrow('governance boundary mismatch');
   });
 
-  it('records audit events when CLI disables and revokes agents', async () => {
+  it('records audit events when CLI disables, revokes, changes roles, and rotates keys', async () => {
     const { publicKeyJwk, root } = await makeHarness('active');
     const cli = resolve(process.cwd(), 'src/cli/index.ts');
     const env = { ...process.env, AGENTZT_ROOT: root };
@@ -204,6 +204,15 @@ describe('agent lifecycle enforcement', () => {
     let registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
     expect(registry.agents[0].status).toBe('disabled');
     expect(registry.agents[0].disabled).toBe(true);
+
+    execFileSync(process.execPath, [cli, 'agents', 'role', '--agent', 'agent-01', '--role', 'demo-agent', '--reason', 'same-role'], { env });
+
+    const beforeRotationKey = registry.agents[0].publicKeyJwk.x;
+    execFileSync(process.execPath, [cli, 'agents', 'rotate-key', '--agent', 'agent-01', '--reason', 'scheduled'], { env });
+    registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
+    expect(registry.agents[0].publicKeyJwk.x).not.toBe(beforeRotationKey);
+    const identity = JSON.parse(readFileSync(join(root, '.agentzt', 'identities', 'agent-01.json'), 'utf8'));
+    expect(identity.publicKeyJwk).toEqual(registry.agents[0].publicKeyJwk);
 
     writeJsonFile(join(root, 'config', 'agents.json'), {
       agents: [{
@@ -224,8 +233,47 @@ describe('agent lifecycle enforcement', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
-    expect(auditLines.map((event) => event.action)).toEqual(['lifecycle.disable', 'lifecycle.revoke']);
-    expect(auditLines.map((event) => event.resource)).toEqual(['agent:agent-01', 'agent:agent-01']);
-    expect(auditLines[1].reason).toBe('compromised');
+    expect(auditLines.map((event) => event.action)).toEqual([
+      'lifecycle.disable',
+      'lifecycle.key_rotation',
+      'lifecycle.revoke',
+    ]);
+    expect(auditLines.map((event) => event.resource)).toEqual(['agent:agent-01', 'agent:agent-01', 'agent:agent-01']);
+    expect(auditLines[1].reason).toBe('scheduled');
+    expect(auditLines[2].reason).toBe('compromised');
+  });
+
+  it('records an audit event when CLI changes an agent role', async () => {
+    const { root } = await makeHarness('active');
+    const cli = resolve(process.cwd(), 'src/cli/index.ts');
+    const env = { ...process.env, AGENTZT_ROOT: root };
+    const policy = JSON.parse(readFileSync(join(root, 'config', 'policy.json'), 'utf8'));
+    policy.roles['research-agent'] = {
+      models: ['claude-haiku-4-5'],
+      tools: ['kb.search'],
+    };
+    writeJsonFile(join(root, 'config', 'policy.json'), policy);
+
+    execFileSync(process.execPath, [cli, 'agents', 'role', '--agent', 'agent-01', '--role', 'research-agent', '--reason', 'least privilege'], { env });
+
+    let registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
+    expect(registry.agents[0].role).toBe('research-agent');
+    execFileSync(process.execPath, [cli, 'agents', 'rotate-key', '--agent', 'agent-01', '--reason', 'create local identity'], { env });
+    registry = JSON.parse(readFileSync(join(root, 'config', 'agents.json'), 'utf8'));
+    const identity = JSON.parse(readFileSync(join(root, '.agentzt', 'identities', 'agent-01.json'), 'utf8'));
+    expect(identity.role).toBe('research-agent');
+
+    const auditLines = readFileSync(join(root, '.agentzt', 'audit', 'gateway-audit.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(auditLines).toHaveLength(2);
+    expect(auditLines[0].action).toBe('lifecycle.role_change');
+    expect(auditLines[0].reason).toBe('least privilege');
+    expect(auditLines[0].meta).toMatchObject({
+      previousRole: 'demo-agent',
+      newRole: 'research-agent',
+      status: 'active',
+    });
   });
 });

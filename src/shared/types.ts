@@ -269,6 +269,8 @@ export type AuditAction =
   | 'lifecycle.create'
   | 'lifecycle.disable'
   | 'lifecycle.revoke'
+  | 'lifecycle.role_change'
+  | 'lifecycle.key_rotation'
   | 'token.issue'
   | 'token.reject'
   | 'model.call'

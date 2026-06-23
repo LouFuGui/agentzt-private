@@ -19,7 +19,7 @@ function usage(): never {
 
 Usage:
   npm run enroll -- --agent <id> --role <role> [--description <text>] [--mtls]
-  node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>]]
+  node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>] | role --agent <id> --role <role> [--reason <text>] | rotate-key --agent <id> [--reason <text>] [--mtls]]
   node src/cli/index.ts audit [--limit N | --verify]
   node src/cli/index.ts policy export
   node src/cli/index.ts roles
@@ -30,7 +30,7 @@ Commands:
   enroll   Generate a cryptographic identity for an agent, write the private
            key to .agentzt/identities/<id>.json, and register the public key
            in config/agents.json. With --mtls, also issue an mTLS client cert.
-  agents   List registered agent identities, or disable/revoke one with audit.
+  agents   List registered agent identities, or disable/revoke/change role/rotate key with audit.
   roles    List roles defined in config/policy.json.
   audit    Print recent gateway audit events, or --verify the hash chain.
   policy   Export policy state for GRC/SIEM/SOAR ingestion.
@@ -61,6 +61,10 @@ function recordLifecycleAudit(action: AuditAction, entry: AgentRegistryEntry, re
       status: agentStatus(entry),
     },
   });
+}
+
+function identityPath(agentId: string): string {
+  return resolve(IDENTITIES_DIR, `${agentId}.json`);
 }
 
 function cmdEnroll(args: string[]): void {
@@ -98,7 +102,7 @@ function cmdEnroll(args: string[]): void {
     privateKeyJwk,
     createdAt,
   };
-  const idPath = resolve(IDENTITIES_DIR, `${agentId}.json`);
+  const idPath = identityPath(agentId);
   if (existsSync(idPath) && !force) {
     console.error(`error: identity file already exists: ${idPath} (use --force to overwrite)`);
     process.exit(1);
@@ -166,6 +170,112 @@ function cmdAgentLifecycle(args: string[], target: 'disabled' | 'revoked'): void
   console.log(`${target} agent "${agentId}"`);
 }
 
+function cmdAgentRoleChange(args: string[]): void {
+  const agentId = flag(args, '--agent');
+  const role = flag(args, '--role');
+  const reason = flag(args, '--reason');
+  if (!agentId || !role) {
+    console.error('error: agents role requires --agent <id> --role <role>');
+    process.exit(1);
+  }
+
+  const policy = loadPolicy();
+  if (!policy.roles[role]) {
+    console.error(`error: role "${role}" is not defined in config/policy.json`);
+    console.error(`available roles: ${Object.keys(policy.roles).join(', ')}`);
+    process.exit(1);
+  }
+
+  const reg = loadRegistry();
+  const entry = reg.agents.find((a) => a.agentId === agentId);
+  if (!entry) {
+    console.error(`error: agent "${agentId}" is not registered`);
+    process.exit(1);
+  }
+  if (agentStatus(entry) === 'revoked') {
+    console.error(`error: agent "${agentId}" is revoked and cannot be changed`);
+    process.exit(1);
+  }
+  if (entry.role === role) {
+    console.log(`agent "${agentId}" already has role "${role}"`);
+    return;
+  }
+
+  const previousRole = entry.role;
+  entry.role = role;
+  saveRegistry(reg);
+
+  const idPath = identityPath(agentId);
+  if (existsSync(idPath)) {
+    const identity = JSON.parse(readFileSync(idPath, 'utf8')) as AgentIdentityFile;
+    identity.role = role;
+    writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
+  }
+
+  const auditReason = reason ?? `agent "${agentId}" role changed from "${previousRole}" to "${role}"`;
+  const audit = new AuditLogger(resolve(AUDIT_DIR, 'gateway-audit.jsonl'));
+  audit.record({
+    requestId: newId('cli'),
+    agentId: entry.agentId,
+    role: entry.role,
+    governance: entry.governance,
+    action: 'lifecycle.role_change',
+    resource: `agent:${entry.agentId}`,
+    decision: 'allow',
+    reason: auditReason,
+    meta: {
+      previousRole,
+      newRole: role,
+      status: agentStatus(entry),
+    },
+  });
+  console.log(`changed agent "${agentId}" role from "${previousRole}" to "${role}"`);
+}
+
+function cmdAgentKeyRotation(args: string[]): void {
+  const agentId = flag(args, '--agent');
+  const reason = flag(args, '--reason');
+  if (!agentId) {
+    console.error('error: agents rotate-key requires --agent <id>');
+    process.exit(1);
+  }
+
+  const reg = loadRegistry();
+  const entry = reg.agents.find((a) => a.agentId === agentId);
+  if (!entry) {
+    console.error(`error: agent "${agentId}" is not registered`);
+    process.exit(1);
+  }
+  if (agentStatus(entry) === 'revoked') {
+    console.error(`error: agent "${agentId}" is revoked and cannot rotate keys`);
+    process.exit(1);
+  }
+
+  const { publicKeyJwk, privateKeyJwk } = generateEd25519();
+  entry.publicKeyJwk = publicKeyJwk;
+  saveRegistry(reg);
+
+  mkdirSync(IDENTITIES_DIR, { recursive: true });
+  const idPath = identityPath(agentId);
+  const existing = existsSync(idPath)
+    ? JSON.parse(readFileSync(idPath, 'utf8')) as Partial<AgentIdentityFile>
+    : {};
+  const identityFile: AgentIdentityFile = {
+    agentId,
+    role: entry.role,
+    publicKeyJwk,
+    privateKeyJwk,
+    createdAt: existing.createdAt ?? entry.createdAt ?? new Date().toISOString(),
+  };
+  writeFileSync(idPath, JSON.stringify(identityFile, null, 2) + '\n');
+
+  if (args.includes('--mtls')) issueClientCert(agentId);
+
+  recordLifecycleAudit('lifecycle.key_rotation', entry, reason ?? `agent "${agentId}" key rotated`);
+  console.log(`rotated key for agent "${agentId}"`);
+  console.log(`  private identity: ${idPath}  (keep secret; gitignored)`);
+}
+
 function cmdAgents(args: string[]): void {
   const sub = args[0];
   if (sub === 'disable') {
@@ -176,8 +286,16 @@ function cmdAgents(args: string[]): void {
     cmdAgentLifecycle(args.slice(1), 'revoked');
     return;
   }
+  if (sub === 'role') {
+    cmdAgentRoleChange(args.slice(1));
+    return;
+  }
+  if (sub === 'rotate-key') {
+    cmdAgentKeyRotation(args.slice(1));
+    return;
+  }
   if (sub) {
-    console.error('usage: node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>]]');
+    console.error('usage: node src/cli/index.ts agents [disable|revoke --agent <id> [--reason <text>] | role --agent <id> --role <role> [--reason <text>] | rotate-key --agent <id> [--reason <text>] [--mtls]]');
     process.exit(1);
   }
 
