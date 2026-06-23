@@ -49,15 +49,25 @@ function cleanBoundary(boundary?: GovernanceBoundary): GovernanceBoundary | unde
   return Object.keys(clean).length ? clean : undefined;
 }
 
-function validateBoundaryMatch(required: GovernanceBoundary, actual?: GovernanceBoundary): string | null {
+type BoundaryMatchResult = {
+  message: string;
+  approvalRequired?: boolean;
+  approvalType?: 'cross_environment_access';
+};
+
+function validateBoundaryMatch(required: GovernanceBoundary, actual?: GovernanceBoundary): BoundaryMatchResult | null {
   if (required.organizationId && required.organizationId !== actual?.organizationId) {
-    return `organization "${actual?.organizationId || 'unassigned'}" does not match "${required.organizationId}"`;
+    return { message: `organization "${actual?.organizationId || 'unassigned'}" does not match "${required.organizationId}"` };
   }
   if (required.projectId && required.projectId !== actual?.projectId) {
-    return `project "${actual?.projectId || 'unassigned'}" does not match "${required.projectId}"`;
+    return { message: `project "${actual?.projectId || 'unassigned'}" does not match "${required.projectId}"` };
   }
   if (required.environment && required.environment !== actual?.environment) {
-    return `environment "${actual?.environment || 'unassigned'}" does not match "${required.environment}"`;
+    return {
+      message: `environment "${actual?.environment || 'unassigned'}" does not match "${required.environment}"`,
+      approvalRequired: true,
+      approvalType: 'cross_environment_access',
+    };
   }
   return null;
 }
@@ -110,7 +120,12 @@ export class PolicyEngine {
     const actual = cleanBoundary(entry.governance);
     const mismatch = validateBoundaryMatch(required, actual);
     if (mismatch) {
-      return { allow: false, reason: `governance boundary mismatch: ${mismatch}` };
+      return {
+        allow: false,
+        reason: `governance boundary mismatch: ${mismatch.message}`,
+        approvalRequired: mismatch.approvalRequired,
+        approvalType: mismatch.approvalType,
+      };
     }
     return { allow: true, reason: 'governance boundary satisfied' };
   }
@@ -126,7 +141,12 @@ export class PolicyEngine {
 
     const mismatch = validateBoundaryMatch(required, cleanBoundary(actual));
     if (mismatch) {
-      return { allow: false, reason: `resource governance boundary mismatch: ${mismatch}` };
+      return {
+        allow: false,
+        reason: `resource governance boundary mismatch: ${mismatch.message}`,
+        approvalRequired: mismatch.approvalRequired,
+        approvalType: mismatch.approvalType,
+      };
     }
     return { allow: true, reason: 'resource governance boundary satisfied' };
   }

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -124,6 +124,7 @@ async function makeHarness(agentGovernance: GovernanceBoundary) {
 
   return {
     baseUrl,
+    root,
     token: tokenBody.access_token,
     close: () => gateway.server.close(),
   };
@@ -139,7 +140,7 @@ afterEach(() => {
 
 describe('resource governance enforcement', () => {
   it('denies standing resource access across environment boundaries', async () => {
-    const { baseUrl, token, close } = await makeHarness({
+    const { baseUrl, root, token, close } = await makeHarness({
       organizationId: 'openguardrails',
       projectId: 'agentzt',
       environment: 'development',
@@ -158,6 +159,12 @@ describe('resource governance enforcement', () => {
       expect(denied.status).toBe(403);
       expect(deniedBody.error?.message).toContain('resource governance boundary mismatch');
       expect(deniedBody.error?.message).toContain('environment "development" does not match "production"');
+      const auditLines = readFileSync(join(root, '.agentzt', 'audit', 'gateway-audit.jsonl'), 'utf8').trim().split('\n');
+      const event = JSON.parse(auditLines.at(-1) || '{}');
+      expect(event.meta).toEqual({
+        approvalRequired: true,
+        approvalType: 'cross_environment_access',
+      });
     } finally {
       close();
     }
@@ -178,6 +185,7 @@ describe('resource governance enforcement', () => {
       const deniedBody = await denied.json() as { error?: { message?: string } };
       expect(denied.status).toBe(403);
       expect(deniedBody.error?.message).toContain('resource governance boundary mismatch');
+      expect(deniedBody.error?.message).toContain('environment "development" does not match "production"');
     } finally {
       close();
     }

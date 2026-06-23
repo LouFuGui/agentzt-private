@@ -627,18 +627,31 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   }
 
   // Authorize a resource: in standing scope, OR via a valid JIT elevation grant.
+  function approvalMeta(decision: { approvalRequired?: boolean; approvalType?: string }) {
+    if (!decision.approvalRequired) return undefined;
+    return { approvalRequired: true, approvalType: decision.approvalType };
+  }
+
   function authorizeResource(
     req: IncomingMessage,
     claims: AccessTokenClaims,
     kind: 'model' | 'tool',
     name: string,
-  ): { allow: boolean; reason: string; via: 'scope' | 'jit' } {
+  ): { allow: boolean; reason: string; via: 'scope' | 'jit'; approvalRequired?: boolean; approvalType?: string } {
     const scopeList = kind === 'model' ? claims.scope.models : claims.scope.tools;
     const inScope = scopeList.includes('*') || scopeList.includes(name);
     const base = kind === 'model' ? policy.decideModel(claims.role, name) : policy.decideTool(claims.role, name);
     const resourceClass = policy.resourceClassFor(kind, name);
     const resourceGovernance = policy.decideResourceGovernance(kind, name, claims.governance);
-    if (!resourceGovernance.allow) return { allow: false, reason: resourceGovernance.reason, via: 'scope' };
+    if (!resourceGovernance.allow) {
+      return {
+        allow: false,
+        reason: resourceGovernance.reason,
+        via: 'scope',
+        approvalRequired: resourceGovernance.approvalRequired,
+        approvalType: resourceGovernance.approvalType,
+      };
+    }
     const jitRequired = resourceClass?.jitRequired === true;
     if (inScope && base.allow && !jitRequired) return { allow: true, reason: base.reason, via: 'scope' };
 
@@ -725,6 +738,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'model.call', resource: model, decision: 'deny', reason: authz.reason,
+        meta: approvalMeta(authz),
       });
       log.deny(`model.call ${claims.sub} -> ${model}: ${authz.reason}`);
       return sendError(res, 403, 'permission_error', authz.reason);
@@ -852,6 +866,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       recordAudit({
         requestId: rid, agentId: claims.sub, role: claims.role,
         action: 'tool.call', resource: name, decision: 'deny', reason: authz.reason,
+        meta: approvalMeta(authz),
       });
       log.deny(`tool.call ${claims.sub} -> ${name}: ${authz.reason}`);
       return sendError(res, 403, 'permission_error', authz.reason);

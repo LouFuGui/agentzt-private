@@ -268,6 +268,8 @@ export type ClientAssertionClaims = {
 export type Decision = {
   allow: boolean;
   reason: string;
+  approvalRequired?: boolean;
+  approvalType?: 'cross_environment_access';
 };
 
 export type AuditAction =
