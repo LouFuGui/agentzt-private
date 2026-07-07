@@ -45,7 +45,7 @@ import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
 import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
-import { OpaClient, resolveOpaConfig } from './opa-client.ts';
+import { OpaClient, resolveOpaConfig, sanitizeForOpa } from './opa-client.ts';
 import type { OpaDecisionInput } from './opa-client.ts';
 import { FalcoRuntimeMonitor, resolveFalcoConfig } from './falco-client.ts';
 import type { FalcoRuntimeDecision, FalcoWebhookPayload } from './falco-client.ts';
@@ -718,6 +718,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
     name: string,
     authVia: 'scope' | 'jit',
     riskLevel?: RiskLevel,
+    requestCtx?: { arguments?: Record<string, unknown> },
   ): Promise<{ allow: true; reason: string; input?: OpaDecisionInput } | { allow: false; reason: string; input?: OpaDecisionInput }> {
     if (!opaClient) return { allow: true, reason: 'OPA disabled' };
     const input: OpaDecisionInput = {
@@ -729,6 +730,10 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       riskLevel,
       now: new Date().toISOString(),
     };
+    if (requestCtx?.arguments !== undefined) {
+      // Sanitize before sending to OPA: redact sensitive keys, truncate long strings.
+      input.request = { arguments: sanitizeForOpa(requestCtx.arguments) };
+    }
     const decision = await opaClient.decide(input);
     return { ...decision, input };
   }
@@ -926,17 +931,6 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 403, 'permission_error', abac.reason);
     }
 
-    const opaDecision = await decideOpa(claims, 'tool.call', 'tool', name, authz.via);
-    if (!opaDecision.allow) {
-      recordAudit({
-        requestId: rid, agentId: claims.sub, role: claims.role,
-        action: 'tool.call', resource: name, decision: 'deny', reason: opaDecision.reason,
-        meta: { opa: true, opaInput: opaDecision.input },
-      });
-      log.deny(`tool.call ${claims.sub} -> ${name}: ${opaDecision.reason}`);
-      return sendError(res, 403, 'permission_error', opaDecision.reason);
-    }
-
     const tool = getTool(name);
     if (!tool) {
       // Policy allowed it but no implementation exists -> still deny-by-default.
@@ -959,6 +953,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       return sendError(res, 429, 'rate_limit_error', 'requests per minute exceeded');
     }
 
+    // Parse and validate args before OPA so policies inspect normalized parameters.
     const body = await readJson<{ arguments?: Record<string, unknown> }>(req);
     const args = body.arguments ?? {};
     const validationError = tool.validate(args);
@@ -970,6 +965,18 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       });
       log.deny(`tool.call ${claims.sub} -> ${name}: ${validationError}`);
       return sendError(res, 400, 'invalid_request', validationError);
+    }
+
+    // OPA extra deny — receives sanitized args so policies can inspect e.g. input.request.arguments.query.
+    const opaDecision = await decideOpa(claims, 'tool.call', 'tool', name, authz.via, undefined, { arguments: args });
+    if (!opaDecision.allow) {
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'tool.call', resource: name, decision: 'deny', reason: opaDecision.reason,
+        meta: { opa: true, opaInput: opaDecision.input },
+      });
+      log.deny(`tool.call ${claims.sub} -> ${name}: ${opaDecision.reason}`);
+      return sendError(res, 403, 'permission_error', opaDecision.reason);
     }
 
     let credentials: Record<string, string> | undefined;
