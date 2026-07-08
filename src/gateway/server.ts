@@ -147,7 +147,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
-  // User management API — reuses the gateway's own signing key for session tokens.
+  // User management API 闁?reuses the gateway's own signing key for session tokens.
   const sessionService = new SessionTokenService(cfg.issuer, key.privateKey, key.publicKey);
   setSessionTokenService(sessionService);
   const authApi = createAuthApi(cfg.issuer, key.privateKey, key.publicKey);
@@ -478,7 +478,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
       // === Management API ===
       if (path.startsWith('/api/')) {
-        // Auth routes (register/login/refresh/logout/me) — no prior auth required
+        // Auth routes (register/login/refresh/logout/me) 闁?no prior auth required
         if (await authApi.route(req, res)) return;
         // Application management
         if (await routeAppsApi(req, res)) return;
@@ -1478,12 +1478,40 @@ async function loadGatewaySigningKey(vault: ReturnType<typeof resolveVaultConfig
 // ---- Anthropic Messages response helpers -----------------------------------
 
 function extractText(body: unknown): string {
-  const content = (body as Record<string, unknown>)?.['content'];
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((b) => (b as Record<string, unknown>)['text'])
-    .filter((t): t is string => typeof t === 'string')
-    .join('\n');
+  const data = body as Record<string, unknown> | null;
+  if (!data || typeof data !== 'object') return '';
+
+  // Anthropic Messages style:
+  // { content: [{ type: "text", text: "..." }] }
+  const content = data['content'];
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => (b as Record<string, unknown>)['text'])
+      .filter((t): t is string => typeof t === 'string')
+      .join('\n');
+  }
+
+  // OpenAI / DeepSeek chat completions style:
+  // { choices: [{ message: { content: "..." } }] }
+  const choices = data['choices'];
+  if (Array.isArray(choices)) {
+    const texts: string[] = [];
+    for (const choice of choices) {
+      const message = (choice as Record<string, unknown>)['message'] as Record<string, unknown> | undefined;
+      const messageContent = message?.['content'];
+      if (typeof messageContent === 'string') {
+        texts.push(messageContent);
+      } else if (Array.isArray(messageContent)) {
+        for (const block of messageContent) {
+          const text = (block as Record<string, unknown>)['text'];
+          if (typeof text === 'string') texts.push(text);
+        }
+      }
+    }
+    return texts.join('\n');
+  }
+
+  return '';
 }
 
 function replaceText(body: unknown, text: string): void {

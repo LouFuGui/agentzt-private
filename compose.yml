@@ -7,6 +7,8 @@ services:
       - "8700:8700"
     environment:
       NODE_ENV: production
+      AGENTZT_UPSTREAM_DEEPSEEK_KEY: ${AGENTZT_UPSTREAM_DEEPSEEK_KEY}
+      AGENTZT_UPSTREAM_ANTHROPIC_KEY: ${AGENTZT_UPSTREAM_ANTHROPIC_KEY:-}
     volumes:
       - ./config:/app/config
       - ./.agentzt:/app/.agentzt
@@ -21,7 +23,7 @@ services:
       - "8787:8787"
     environment:
       NODE_ENV: production
-      AGENTZT_AGENT_ID: ${AGENTZT_AGENT_ID:-demo-agent-01}
+      AGENTZT_AGENT_ID: ${AGENTZT_AGENT_ID:-dev-agent}
       AGENTZT_GATEWAY_URL: http://gateway:8700
     volumes:
       - ./.agentzt:/app/.agentzt
