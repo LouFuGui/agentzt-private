@@ -33,6 +33,8 @@
     "vitest": "^4.1.9"
   },
   "dependencies": {
+    "@temporalio/client": "^1.19.0",
+    "@temporalio/common": "^1.19.0",
     "ws": "^8.21.0"
   }
 }

@@ -69,6 +69,8 @@ describe('upstream provider routing', () => {
   });
 
   it('reports the selected provider when its key is missing', async () => {
+    vi.stubEnv('AGENTZT_UPSTREAM_DEEPSEEK_KEY', '');
+
     const result = await callModel(config(), {
       model: 'deepseek-chat',
       body: {

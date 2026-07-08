@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
+import { Client, Connection } from '@temporalio/client';
 import type { TemporalConfig } from '../shared/types.ts';
 
 export type TemporalApiResult = {
@@ -29,128 +30,184 @@ export type TemporalQueryWorkflowArgs = {
   input?: unknown;
 };
 
-export const TEMPORAL_JSON_ENCODING = 'json/plain';
-
-type TemporalPayloads = {
-  payloads: Array<{
-    metadata: { encoding: string };
-    data: string;
-  }>;
-};
-
 export const DEFAULT_TEMPORAL_CONFIG: TemporalConfig = {
   enabled: false,
-  baseUrl: 'http://localhost:7243/api/v1',
+  // With the SDK this is the Temporal frontend gRPC address.
+  // Keep the existing field name for backward-compatible config shape.
+  baseUrl: '127.0.0.1:7233',
   namespace: 'default',
   defaultTaskQueue: 'agentzt-tasks',
   timeoutMs: 5000,
   apiKeyEnv: 'TEMPORAL_API_KEY',
 };
 
-function trimSlash(value: string): string {
-  return value.endsWith('/') ? value.slice(0, -1) : value;
-}
+function normalizeAddress(value: string): string {
+  // Accept either "127.0.0.1:7233" or legacy URL-like values.
+  if (!value.includes('://')) return value.replace(/\/+$/, '');
 
-function temporalPayloads(input: unknown): TemporalPayloads | undefined {
-  if (input === undefined) return undefined;
-  return {
-    payloads: [{
-      metadata: { encoding: Buffer.from(TEMPORAL_JSON_ENCODING).toString('base64') },
-      data: Buffer.from(JSON.stringify(input)).toString('base64'),
-    }],
-  };
+  const url = new URL(value);
+  return `${url.hostname}${url.port ? `:${url.port}` : ''}`;
 }
 
 export function resolveTemporalConfig(config?: Partial<TemporalConfig>): TemporalConfig {
   return {
     ...DEFAULT_TEMPORAL_CONFIG,
     ...config,
-    baseUrl: trimSlash(config?.baseUrl ?? DEFAULT_TEMPORAL_CONFIG.baseUrl),
+    baseUrl: normalizeAddress(config?.baseUrl ?? DEFAULT_TEMPORAL_CONFIG.baseUrl),
   };
 }
 
 export class TemporalClient {
   readonly config: TemporalConfig;
+  private clientPromise?: Promise<Client>;
 
   constructor(config?: Partial<TemporalConfig>) {
     this.config = resolveTemporalConfig(config);
   }
 
   async startWorkflow(args: TemporalStartWorkflowArgs): Promise<TemporalApiResult> {
-    const body: Record<string, unknown> = {
-      workflow_id: args.workflowId ?? `agentzt_wf_${randomUUID()}`,
-      workflow_type: { name: args.workflowType },
-      task_queue: { name: args.taskQueue ?? this.config.defaultTaskQueue },
-    };
-    const input = temporalPayloads(args.input);
-    if (input) body.input = input;
-    return this.request('/workflows', body);
-  }
-
-  async signalWorkflow(args: TemporalSignalWorkflowArgs): Promise<TemporalApiResult> {
-    const body: Record<string, unknown> = {};
-    if (args.runId) body.workflow_run_id = args.runId;
-    const input = temporalPayloads(args.input);
-    if (input) body.input = input;
-    return this.request(`/workflows/${encodeURIComponent(args.workflowId)}/signal/${encodeURIComponent(args.signalName)}`, body);
-  }
-
-  async queryWorkflow(args: TemporalQueryWorkflowArgs): Promise<TemporalApiResult> {
-    const body: Record<string, unknown> = {};
-    if (args.runId) body.workflow_run_id = args.runId;
-    const input = temporalPayloads(args.input);
-    if (input) body.input = input;
-    return this.request(`/workflows/${encodeURIComponent(args.workflowId)}/query/${encodeURIComponent(args.queryType)}`, body);
-  }
-
-  private async request(path: string, body: Record<string, unknown>): Promise<TemporalApiResult> {
     if (!this.config.enabled) {
       return { ok: false, status: 503, error: 'Temporal integration is disabled' };
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    try {
+      const client = await this.getClient();
+      const workflowId = args.workflowId ?? `agentzt_wf_${randomUUID()}`;
+
+      const handle = await withTimeout(
+        client.workflow.start(args.workflowType, {
+          workflowId,
+          taskQueue: args.taskQueue ?? this.config.defaultTaskQueue,
+          args: args.input === undefined ? [] : [args.input],
+        }),
+        this.config.timeoutMs,
+        'Temporal startWorkflow',
+      );
+
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          workflowId: handle.workflowId,
+          firstExecutionRunId: handle.firstExecutionRunId,
+        },
+      };
+    } catch (err) {
+      return temporalError(err);
+    }
+  }
+
+  async signalWorkflow(args: TemporalSignalWorkflowArgs): Promise<TemporalApiResult> {
+    if (!this.config.enabled) {
+      return { ok: false, status: 503, error: 'Temporal integration is disabled' };
+    }
+
+    try {
+      const client = await this.getClient();
+      const handle = client.workflow.getHandle(args.workflowId, args.runId);
+
+      await withTimeout(
+        handle.signal(args.signalName, ...(args.input === undefined ? [] : [args.input])),
+        this.config.timeoutMs,
+        'Temporal signalWorkflow',
+      );
+
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          workflowId: args.workflowId,
+          runId: args.runId,
+          signalName: args.signalName,
+        },
+      };
+    } catch (err) {
+      return temporalError(err);
+    }
+  }
+
+  async queryWorkflow(args: TemporalQueryWorkflowArgs): Promise<TemporalApiResult> {
+    if (!this.config.enabled) {
+      return { ok: false, status: 503, error: 'Temporal integration is disabled' };
+    }
+
+    try {
+      const client = await this.getClient();
+      const handle = client.workflow.getHandle(args.workflowId, args.runId);
+
+      const result = await withTimeout(
+        handle.query(args.queryType, ...(args.input === undefined ? [] : [args.input])),
+        this.config.timeoutMs,
+        'Temporal queryWorkflow',
+      );
+
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          workflowId: args.workflowId,
+          runId: args.runId,
+          queryType: args.queryType,
+          result,
+        },
+      };
+    } catch (err) {
+      return temporalError(err);
+    }
+  }
+
+  private async getClient(): Promise<Client> {
+    if (!this.clientPromise) {
+      this.clientPromise = this.connect();
+    }
+    return await this.clientPromise;
+  }
+
+  private async connect(): Promise<Client> {
+    const headers: Record<string, string> = {};
     const apiKey = this.config.apiKeyEnv ? process.env[this.config.apiKeyEnv] : undefined;
     if (apiKey) headers.authorization = ['Bearer', apiKey].join(' ');
 
-    try {
-      const response = await fetch(
-        `${this.config.baseUrl}/namespaces/${encodeURIComponent(this.config.namespace)}${path}`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        },
-      );
-      const responseBody = await readResponseBody(response);
-      if (!response.ok) {
-        return {
-          ok: false,
-          status: response.status,
-          error: typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody),
-          body: responseBody,
-        };
-      }
-      return { ok: true, status: response.status, body: responseBody };
-    } catch (err) {
-      const message = (err as Error).name === 'AbortError'
-        ? `Temporal request timed out after ${this.config.timeoutMs}ms`
-        : (err as Error).message;
-      return { ok: false, status: 502, error: message };
-    } finally {
-      clearTimeout(timeout);
-    }
+    const connection = await withTimeout(
+      Connection.connect({
+        address: this.config.baseUrl,
+        metadata: headers,
+      }),
+      this.config.timeoutMs,
+      'Temporal connect',
+    );
+
+    return new Client({
+      connection,
+      namespace: this.config.namespace,
+    });
   }
 }
 
-async function readResponseBody(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  const timeout = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      clearTimeout(timer);
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return await Promise.race([promise, timeout]);
+}
+
+function temporalError(err: unknown): TemporalApiResult {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    ok: false,
+    status: 502,
+    error: message,
+    body: {
+      message,
+      name: err instanceof Error ? err.name : 'TemporalError',
+    },
+  };
 }

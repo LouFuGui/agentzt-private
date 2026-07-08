@@ -21,6 +21,7 @@ async function makeHarness(agentGovernance: GovernanceBoundary) {
   const { generateEd25519 } = await import('../../src/shared/crypto.ts');
   const { AgentIdentity } = await import('../../src/client/identity.ts');
   const { createGatewayServer } = await import('../../src/gateway/server.ts');
+  const { resetAppStore } = await import('../../src/api/app-store.ts');
 
   const agentKeys = generateEd25519();
   const agentId = 'agent-01';
@@ -126,7 +127,12 @@ async function makeHarness(agentGovernance: GovernanceBoundary) {
     baseUrl,
     root,
     token: tokenBody.access_token,
-    close: () => gateway.server.close(),
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        gateway.server.close((err) => err ? reject(err) : resolve());
+      });
+      resetAppStore();
+    },
   };
 }
 
@@ -134,7 +140,12 @@ afterEach(() => {
   delete process.env.AGENTZT_ROOT;
   vi.resetModules();
   for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw err;
+    }
   }
 });
 

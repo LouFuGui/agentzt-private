@@ -49,7 +49,7 @@ async function makeHarness() {
   writeJsonFile(join(root, 'config', 'agents.json'), { agents: [] });
 
   const { createGatewayServer } = await import('../../src/gateway/server.ts');
-  const { getAppStore } = await import('../../src/api/app-store.ts');
+  const { getAppStore, resetAppStore } = await import('../../src/api/app-store.ts');
   const gateway = await createGatewayServer();
   await new Promise<void>((resolve) => {
     gateway.server.listen(0, '127.0.0.1', () => resolve());
@@ -60,7 +60,12 @@ async function makeHarness() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     modelApiKey: app.modelApiKey,
-    close: () => gateway.server.close(),
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        gateway.server.close((err) => err ? reject(err) : resolve());
+      });
+      resetAppStore();
+    },
   };
 }
 
@@ -68,7 +73,12 @@ afterEach(() => {
   delete process.env.AGENTZT_ROOT;
   vi.resetModules();
   for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw err;
+    }
   }
 });
 
