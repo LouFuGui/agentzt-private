@@ -147,7 +147,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
-  // User management API 闂?reuses the gateway's own signing key for session tokens.
+  // User management API - reuses the gateway's own signing key for session tokens.
   const sessionService = new SessionTokenService(cfg.issuer, key.privateKey, key.publicKey);
   setSessionTokenService(sessionService);
   const authApi = createAuthApi(cfg.issuer, key.privateKey, key.publicKey);
@@ -478,7 +478,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
 
       // === Management API ===
       if (path.startsWith('/api/')) {
-        // Auth routes (register/login/refresh/logout/me) 闂?no prior auth required
+        // Auth routes (register/login/refresh/logout/me) - no prior auth required
         if (await authApi.route(req, res)) return;
         // Application management
         if (await routeAppsApi(req, res)) return;
