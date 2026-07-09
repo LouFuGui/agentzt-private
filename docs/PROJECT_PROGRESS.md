@@ -124,3 +124,11 @@
   - 可部署到企业内网：`compose.yml` 覆盖单机/内网 Compose，`deploy/kubernetes/` 覆盖集群 ConfigMap、Deployment、Service、PVC。
   - 交付物完整：Dockerfile、Compose、Kubernetes manifests、offline deployment docs 均已落地，并有 deployment 静态测试保护。
 - 对照总计划书首版产品边界，Milestone 1-5 均已有最小闭环；后续如继续演进，应进入新的增强阶段，而不是 Milestone 5 的阻塞缺口。
+
+## 2026-07-09
+
+### 第二版计划书需求引导启动
+
+- 用户确认第二版项目计划书希望更多围绕“智能体沙盒”方向推进，因为用户主要负责该方向。
+- 用户当前已有可用的沙盒运行时 Docker，并且比较了解 AIOsandbox 与 opensandbox。
+- 当前引导重点应从“AgentZT 如何把沙盒运行时纳入零信任控制面”继续收敛，包括沙盒接入位置、运行时抽象、权限模型、审计范围、网络/文件系统隔离、工具执行策略与首个可交付闭环。
