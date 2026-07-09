@@ -92,6 +92,7 @@ function validateSandboxExecute(a: Record<string, unknown>): string | null {
   if (mode === 'command') {
     const err = requireString(a, 'command', SANDBOX_COMMAND_MAX_CHARS);
     if (err) return err;
+    if (String(a['command']).trim() === '') return 'parameter "command" must include an executable name';
     if (a['code'] !== undefined) return 'command execution must not include "code"';
   } else {
     const codeErr = requireString(a, 'code', SANDBOX_CODE_MAX_CHARS);
@@ -175,8 +176,11 @@ function decideSandboxPolicy(
     }
   }
   if (input.mode === 'command' && policy.allowedCommands) {
-    const commandName = input.command.trim().split(/\s+/, 1)[0] as string;
+    const commandName = input.command.trim().split(/\s+/, 1)[0] ?? '';
     meta['commandName'] = commandName;
+    if (!commandName) {
+      return { allow: false, reason: 'command must include an executable name', meta };
+    }
     if (!policy.allowedCommands.includes(commandName)) {
       return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };
     }

@@ -448,6 +448,7 @@ describe('sandbox.execute gateway tool', () => {
       const { getTool } = await import('../../src/gateway/tool-registry.ts');
       const tool = getTool('sandbox.execute');
       if (!tool) throw new Error('sandbox.execute not found');
+      expect(tool.validate({ command: '   ' })).toBe('parameter "command" must include an executable name');
 
       const result = await tool.run(
         { command: 'rm -rf /workspace' },
