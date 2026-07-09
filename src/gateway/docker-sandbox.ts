@@ -193,7 +193,8 @@ export class DockerSandboxRuntime {
           timeoutMs,
         );
       } catch (err) {
-        if ((err as Error).name !== 'AbortError' && (err as Error).name !== 'TimeoutError') throw err;
+        const errorName = (err as Error).name;
+        if (errorName !== 'AbortError' && errorName !== 'TimeoutError') throw err;
         timedOut = true;
         await this.kill(containerId);
         // Match the conventional timeout(1) exit code so callers can classify timeouts.

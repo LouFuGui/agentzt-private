@@ -58,7 +58,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     });
     const text = await res.text();
     const body = text ? JSON.parse(text) as HttpSandboxResponse : {};
-    const exitCode = body.exitCode ?? body.exit_code ?? (res.ok && (body.ok ?? body.success ?? true) ? 0 : 1);
+    const exitCode = resolveExitCode(res.ok, body);
     const output = body.output ?? [body.stdout, body.stderr].filter(Boolean).join('');
     return {
       sandboxId: body.sandboxId ?? body.sandbox_id ?? `remote-${Date.now()}`,
@@ -77,6 +77,13 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       },
     };
   }
+}
+
+function resolveExitCode(httpOk: boolean, body: HttpSandboxResponse): number {
+  if (body.exitCode !== undefined) return body.exitCode;
+  if (body.exit_code !== undefined) return body.exit_code;
+  const reportedOk = body.ok ?? body.success ?? httpOk;
+  return httpOk && reportedOk ? 0 : 1;
 }
 
 export function createSandboxRuntime(cfg: GatewayConfig['sandbox']): SandboxRuntime {

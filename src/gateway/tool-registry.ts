@@ -175,7 +175,7 @@ function decideSandboxPolicy(
     }
   }
   if (input.mode === 'command' && policy.allowedCommands) {
-    const commandName = input.command.trim().split(/\s+/)[0] ?? '';
+    const commandName = input.command.trim().split(/\s+/, 1)[0] as string;
     meta['commandName'] = commandName;
     if (!policy.allowedCommands.includes(commandName)) {
       return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };
@@ -238,7 +238,7 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
             policyReason: policyDecision.reason,
             policy: policyDecision.meta,
             resourceLimits: {
-              timeoutMs: request.timeoutMs ?? cfg?.timeoutMs,
+              timeoutMs: request.timeoutMs !== undefined ? request.timeoutMs : cfg?.timeoutMs,
               memoryMb: result.metrics.memoryLimitMb,
             },
             network: {

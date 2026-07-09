@@ -113,7 +113,7 @@
     "networkAccess": false,
     "filesystemAccess": [],
     "policy": {
-      "allowedCommands": ["echo", "cat", "ls", "pwd", "node", "python3", "bash", "sh"],
+      "allowedCommands": ["echo", "cat", "ls", "pwd"],
       "allowedLanguages": ["python", "javascript", "bash"],
       "maxTimeoutMs": 60000,
       "maxMemoryMb": 512,
