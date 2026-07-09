@@ -120,25 +120,33 @@
         "type": "docker",
         "enabled": true,
         "capacity": 1,
-        "defaultImage": "alpine:3.20"
+        "defaultImage": "alpine:3.20",
+        "allowedProjectIds": ["agentzt"],
+        "capabilities": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "agent.process"],
+        "networkPolicy": { "defaultAccess": false, "egress": [] },
+        "filesystemPolicy": { "mounts": [], "readonly": true }
       },
       {
         "name": "aiosandbox-http",
         "type": "aiosandbox",
         "enabled": false,
         "baseUrl": "http://localhost:8080",
-        "healthPath": "/v1/sandbox/health",
-        "executePath": "/v1/sandbox/execute",
-        "capacity": 10
+        "healthPath": "/healthz",
+        "executePath": "/v1/shell/exec",
+        "apiKeyEnv": "SANDBOX_API_KEY",
+        "capacity": 10,
+        "capabilities": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "sandbox.browser", "sandbox.mcp"]
       },
       {
         "name": "opensandbox-http",
         "type": "opensandbox",
         "enabled": false,
         "baseUrl": "http://localhost:8081",
-        "healthPath": "/v1/sandbox/health",
-        "executePath": "/v1/sandbox/execute",
-        "capacity": 10
+        "healthPath": "/v1/health",
+        "agentPath": "/v1/sandboxes",
+        "apiKeyEnv": "OPEN_SANDBOX_API_KEY",
+        "capacity": 10,
+        "capabilities": ["agent.process", "sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute"]
       }
     ],
     "modelValidation": {

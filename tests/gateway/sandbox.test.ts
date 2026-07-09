@@ -264,6 +264,7 @@ describe('DockerSandboxRuntime', () => {
         timeoutMs: 1000,
       });
 
+
       const result = await runtime.execute({
         mode: 'code',
         language: 'python',
@@ -288,6 +289,146 @@ describe('DockerSandboxRuntime', () => {
       }]);
     } finally {
       await httpSandbox.close();
+    }
+  });
+
+  it('adapts AIO Sandbox shell and Jupyter endpoints', async () => {
+    const requests: Array<{ url?: string; body: unknown }> = [];
+    const server = createServer(async (req, res) => {
+      const raw = await readBody(req);
+      requests.push({ url: req.url, body: raw ? JSON.parse(raw) : undefined });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url === '/v1/shell/exec') {
+        res.end(JSON.stringify({ data: { output: 'shell-ok', exit_code: 0 } }));
+        return;
+      }
+      if (req.url === '/v1/jupyter/execute') {
+        res.end(JSON.stringify({ data: { output: 'py-ok' } }));
+        return;
+      }
+      res.end(JSON.stringify({ output: 'unexpected' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('aio sandbox did not bind a TCP port');
+    try {
+      const { AioSandboxRuntime } = await import('../../src/gateway/sandbox-runtime.ts');
+      const runtime = new AioSandboxRuntime({
+        name: 'aiosandbox',
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        timeoutMs: 1000,
+      });
+
+      const shell = await runtime.execute({ mode: 'command', command: 'echo ok' });
+      const python = await runtime.execute({ mode: 'code', language: 'python', code: 'print(1)' });
+
+      expect(shell).toMatchObject({ runtime: 'aiosandbox', exitCode: 0, output: 'shell-ok' });
+      expect(python).toMatchObject({ runtime: 'aiosandbox', exitCode: 0, output: 'py-ok' });
+      expect(requests).toEqual([
+        { url: '/v1/shell/exec', body: { command: 'echo ok' } },
+        { url: '/v1/jupyter/execute', body: { code: 'print(1)' } },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('uses OpenSandbox lifecycle API paths for agent process sandboxes', async () => {
+    const calls: Array<{ method?: string; url?: string; body?: unknown }> = [];
+    const server = createServer(async (req, res) => {
+      const raw = await readBody(req);
+      calls.push({ method: req.method, url: req.url, body: raw ? JSON.parse(raw) : undefined });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.method === 'POST' && req.url === '/v1/sandboxes') {
+        res.end(JSON.stringify({ id: 'osb-1', state: 'Pending', image: 'python:3.12' }));
+        return;
+      }
+      res.end(JSON.stringify({ id: 'osb-1' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('opensandbox did not bind a TCP port');
+    try {
+      const { OpenSandboxRuntime } = await import('../../src/gateway/sandbox-runtime.ts');
+      const runtime = new OpenSandboxRuntime({
+        name: 'opensandbox',
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        timeoutMs: 1000,
+      });
+
+      const created = await runtime.createAgent({
+        image: 'python:3.12',
+        command: 'sleep infinity',
+        projectId: 'agentzt',
+        agentId: 'agent-01',
+        memoryMb: 256,
+        networkAccess: false,
+      });
+      const started = await runtime.startAgent(created.sandboxId);
+      const stopped = await runtime.stopAgent(created.sandboxId);
+      const destroyed = await runtime.destroyAgent(created.sandboxId);
+
+      expect(created).toMatchObject({ sandboxId: 'osb-1', runtime: 'opensandbox', status: 'created' });
+      expect(started.status).toBe('started');
+      expect(stopped.status).toBe('stopped');
+      expect(destroyed.status).toBe('destroyed');
+      expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+        'POST /v1/sandboxes',
+        'POST /v1/sandboxes/osb-1/resume',
+        'POST /v1/sandboxes/osb-1/pause',
+        'DELETE /v1/sandboxes/osb-1',
+      ]);
+      expect(calls[0]?.body).toMatchObject({
+        image: 'python:3.12',
+        entrypoint: ['sh', '-c', 'sleep infinity'],
+        resources: { memory: '256Mi' },
+        metadata: { agentId: 'agent-01', projectId: 'agentzt', controlPlane: 'agentzt' },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('selects an enabled runtime provider by project and capacity', async () => {
+    const hits: string[] = [];
+    const makeProvider = async (name: string) => {
+      const server = createServer(async (req, res) => {
+        await readBody(req);
+        hits.push(name);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ sandboxId: name, output: name, exitCode: 0 }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error(`${name} did not bind a TCP port`);
+      return {
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () => server.close(),
+      };
+    };
+    const low = await makeProvider('low');
+    const high = await makeProvider('high');
+    const { createSandboxRuntime } = await import('../../src/gateway/sandbox-runtime.ts');
+    try {
+      const runtime = createSandboxRuntime({
+        enabled: true,
+        runtime: 'http',
+        baseUrl: low.baseUrl,
+        autoStart: false,
+        runtimes: [
+          { name: 'low', type: 'http', enabled: true, baseUrl: low.baseUrl, capacity: 1, allowedProjectIds: ['agentzt'] },
+          { name: 'high', type: 'http', enabled: true, baseUrl: high.baseUrl, capacity: 10, allowedProjectIds: ['agentzt'] },
+          { name: 'other-project', type: 'http', enabled: true, baseUrl: low.baseUrl, capacity: 99, allowedProjectIds: ['payments'] },
+        ],
+      }, { projectId: 'agentzt', capability: 'sandbox.execute' });
+
+      const result = await runtime.execute({ mode: 'command', command: 'echo selected' });
+
+      expect(result.sandboxId).toBe('high');
+      expect(hits).toEqual(['high']);
+    } finally {
+      low.close();
+      high.close();
     }
   });
 
@@ -535,6 +676,59 @@ describe('sandbox.execute gateway tool', () => {
         },
       });
       expect(docker.requests).toHaveLength(0);
+    } finally {
+      await docker.close();
+    }
+  });
+
+  it('routes sandbox.shell through the unified sandbox runtime', async () => {
+    const docker = await makeDockerApi();
+    const root = makeRoot();
+    mkdirSync(join(root, 'config'), { recursive: true });
+    process.env.AGENTZT_ROOT = root;
+    vi.resetModules();
+
+    try {
+      writeJsonFile(join(root, 'config', 'gateway.json'), {
+        port: 0,
+        issuer: 'agentzt-gateway',
+        tokenTtlSeconds: 300,
+        assertionMaxAgeSeconds: 60,
+        upstream: {
+          mode: 'mock',
+          anthropicBaseUrl: 'https://api.anthropic.com',
+          apiKeyEnv: 'AGENTZT_UPSTREAM_ANTHROPIC_KEY',
+        },
+        sandbox: {
+          enabled: true,
+          runtime: 'docker',
+          dockerSocketPath: docker.socketPath,
+          defaultImage: 'alpine:test',
+          policy: {
+            allowedCommands: ['echo'],
+            allowNetworkAccess: false,
+          },
+        },
+      });
+      const { getTool } = await import('../../src/gateway/tool-registry.ts');
+      const tool = getTool('sandbox.shell');
+      if (!tool) throw new Error('sandbox.shell not found');
+
+      const result = await tool.run(
+        { command: 'echo shell' },
+        { agentId: 'agent-01', role: 'sandbox-role', requestId: 'req-shell' },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.output).toMatchObject({ runtime: 'docker', command: ['sh', '-c', 'echo shell'] });
+      expect(result.auditMeta).toMatchObject({
+        sandbox: {
+          capability: 'sandbox.shell',
+          runtime: 'docker',
+          policyDecision: 'allow',
+        },
+      });
+      expect(docker.requests.map((r) => `${r.method} ${r.url}`)).toContain('POST /v1.41/containers/create');
     } finally {
       await docker.close();
     }

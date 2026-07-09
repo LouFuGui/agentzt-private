@@ -183,17 +183,20 @@ function sandboxProjectId(body: Record<string, unknown>): string | undefined | n
   return value.trim();
 }
 
-function sandboxRuntimeInstance(): SandboxRuntime {
+function sandboxRuntimeInstance(selection: { role?: string; projectId?: string; capability?: string } = {}): SandboxRuntime {
   const cfg = loadGatewayConfig();
-  const key = sandboxRuntimeCacheKey(cfg);
+  const key = sandboxRuntimeCacheKey(cfg, selection);
   if (!sandboxRuntime || sandboxRuntimeKey !== key) {
-    sandboxRuntime = createSandboxRuntime(cfg.sandbox);
+    sandboxRuntime = createSandboxRuntime(cfg.sandbox, selection);
     sandboxRuntimeKey = key;
   }
   return sandboxRuntime;
 }
 
-function sandboxRuntimeCacheKey(cfg: ReturnType<typeof loadGatewayConfig>): string {
+function sandboxRuntimeCacheKey(
+  cfg: ReturnType<typeof loadGatewayConfig>,
+  selection: { role?: string; projectId?: string; capability?: string },
+): string {
   const sandbox = cfg.sandbox;
   return [
     sandbox?.runtime ?? 'docker',
@@ -202,6 +205,9 @@ function sandboxRuntimeCacheKey(cfg: ReturnType<typeof loadGatewayConfig>): stri
     sandbox?.healthPath ?? '',
     sandbox?.executePath ?? '',
     sandbox?.agentPath ?? '',
+    selection.role ?? '',
+    selection.projectId ?? '',
+    selection.capability ?? '',
   ].join('|');
 }
 
@@ -604,16 +610,16 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
 async function handleSandboxAgents(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
   const auth = requireRole(req, res, 'admin');
   if (!auth) return true;
-  const runtime = sandboxRuntimeInstance();
   if (method === 'POST' && parts.length === 3) {
-    if (!runtime.createAgent) {
-      sendError(res, 501, 'not_implemented', 'selected sandbox runtime does not support agent lifecycle');
-      return true;
-    }
     const body = await readJson<Record<string, unknown>>(req);
     const create = sandboxAgentCreateRequest(body);
     if (typeof create === 'string') {
       sendError(res, 400, 'invalid_request', create);
+      return true;
+    }
+    const runtime = sandboxRuntimeInstance({ role: auth.role, projectId: create.projectId, capability: 'agent.process' });
+    if (!runtime.createAgent) {
+      sendError(res, 501, 'not_implemented', 'selected sandbox runtime does not support agent lifecycle');
       return true;
     }
     const started = Date.now();
@@ -632,6 +638,7 @@ async function handleSandboxAgents(req: IncomingMessage, res: ServerResponse, me
   const operation = parts[4] ?? '';
   const started = Date.now();
   try {
+    const runtime = sandboxRuntimeInstance({ role: auth.role, capability: 'agent.process' });
     if (operation === 'start') {
       if (!runtime.startAgent) throw new Error('selected sandbox runtime does not support start');
       const result = await runtime.startAgent(sandboxId);

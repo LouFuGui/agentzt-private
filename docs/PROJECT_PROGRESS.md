@@ -178,3 +178,13 @@
   - Gateway 模型调用路径新增可选 `sandbox.modelValidation`：在 guardrail 后、upstream 前对输入中的高风险代码/命令做 dry-run/语法验证；模型输出后也可二次验证并在失败时替换响应。
   - `config/gateway.json` 增加 runtime registry 示例、health/agent 路径与模型沙盒验证默认配置。
 - 当前仍属于“控制面最小编排”而非完整平台：容量调度、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明仍是后续增强方向。
+
+### 智能体沙盒收敛补强
+
+- 本轮对照“工具执行沙盒优先收敛、多 sandbox runtime、Agent 运行沙盒、模型访问前后安全沙盒、企业沙盒编排平台”复核后继续补齐：
+  - AIO Sandbox 适配改为使用其公开 `/v1/*` API 约定，`sandbox.execute` 在 `aiosandbox` runtime 下会调用 `/v1/shell/exec`，Python code 调用 `/v1/jupyter/execute`。
+  - OpenSandbox 适配新增 lifecycle-native `POST /v1/sandboxes`、`resume`、`pause`、`DELETE /v1/sandboxes/{id}` 路径，用于 Agent process sandbox 控制面管理。
+  - Runtime registry 开始参与选择：按 enabled provider、runtime 类型/名称、project/role/capability 约束与 capacity 排序选择具体 runtime provider。
+  - `sandbox.shell`、`sandbox.file.read`、`sandbox.file.write`、`sandbox.jupyter.execute` 逐步收敛到统一 `sandbox.execute` policy/runtime helper，不再绕过沙盒策略与统一审计 meta。
+  - `config/gateway.json` 的 runtime registry 示例补充 AIO Sandbox/OpenSandbox API key env、capabilities、networkPolicy、filesystemPolicy 与 project 选择示例。
+- 当前仍未宣称完成完整企业沙盒平台：OpenSandbox execd 流式 command/file/code、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明与调度状态持久化仍可继续增强。

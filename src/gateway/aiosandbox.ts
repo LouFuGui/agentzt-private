@@ -109,7 +109,7 @@ export class AIOsandboxClient {
    */
   async getStatus(): Promise<AIOsandboxStatus> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/v1/status`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/sandbox`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });
@@ -255,7 +255,7 @@ export class AIOsandboxClient {
       const body: Record<string, string> = { command };
       if (cwd) body['cwd'] = cwd;
 
-      const res = await fetch(`${this.config.baseUrl}/shell/exec`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/shell/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -287,7 +287,7 @@ export class AIOsandboxClient {
    */
   async fileRead(file: string): Promise<APIResponse<FileReadResult>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/file/read?file=${encodeURIComponent(file)}`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/file/read?file=${encodeURIComponent(file)}`, {
         method: 'GET',
         signal: AbortSignal.timeout(30000),
       });
@@ -315,7 +315,7 @@ export class AIOsandboxClient {
    */
   async fileWrite(file: string, content: string): Promise<APIResponse<{ path: string }>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/file/write`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/file/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ file, content }),
@@ -339,7 +339,7 @@ export class AIOsandboxClient {
    */
   async fileList(path: string): Promise<APIResponse<{ entries: Array<{ name: string; isDir: boolean; size: number }> }>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/file/list?path=${encodeURIComponent(path)}`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/file/list?path=${encodeURIComponent(path)}`, {
         method: 'GET',
         signal: AbortSignal.timeout(30000),
       });
@@ -370,7 +370,7 @@ export class AIOsandboxClient {
    */
   async fileMkdir(path: string): Promise<APIResponse<{ path: string }>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/file/mkdir`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/file/mkdir`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -396,7 +396,7 @@ export class AIOsandboxClient {
    */
   async browserGetInfo(): Promise<APIResponse<BrowserInfo>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/browser/info`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/browser/info`, {
         method: 'GET',
         signal: AbortSignal.timeout(10000),
       });
@@ -425,7 +425,7 @@ export class AIOsandboxClient {
    */
   async browserScreenshot(): Promise<APIResponse<BrowserScreenshot>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/browser/screenshot`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/browser/screenshot`, {
         method: 'GET',
         signal: AbortSignal.timeout(30000),
       });
@@ -452,7 +452,7 @@ export class AIOsandboxClient {
    */
   async browserAction(action: Record<string, unknown>): Promise<APIResponse> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/browser/actions`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/browser/actions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(action),
@@ -485,7 +485,7 @@ export class AIOsandboxClient {
    */
   async jupyterExecute(code: string): Promise<APIResponse<JupyterExecuteResult>> {
     try {
-      const res = await fetch(`${this.config.baseUrl}/jupyter/execute`, {
+      const res = await fetch(`${this.config.baseUrl}/v1/jupyter/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),

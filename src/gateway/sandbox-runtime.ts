@@ -1,5 +1,5 @@
 import { DockerSandboxRuntime } from './docker-sandbox.ts';
-import type { GatewayConfig } from '../shared/types.ts';
+import type { GatewayConfig, SandboxRuntimeProviderConfig } from '../shared/types.ts';
 import type {
   DockerSandboxConfig,
   SandboxAgentCreateRequest,
@@ -10,6 +10,12 @@ import type {
 } from './docker-sandbox.ts';
 
 export type SandboxRuntimeName = 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+export type SandboxRuntimeSelection = {
+  role?: string;
+  projectId?: string;
+  resource?: string;
+  capability?: string;
+};
 // Health checks stay short even for long-running execution runtimes.
 const SANDBOX_HEALTH_TIMEOUT_MS = 5000;
 
@@ -32,6 +38,7 @@ export type HttpSandboxRuntimeConfig = {
   agentPath?: string;
   timeoutMs?: number;
   defaultImage?: string;
+  apiKeyEnv?: string;
 };
 
 type HttpSandboxResponse = Partial<SandboxExecuteResult> & {
@@ -48,12 +55,13 @@ type HttpSandboxResponse = Partial<SandboxExecuteResult> & {
 
 export class HttpSandboxRuntime implements SandboxRuntime {
   readonly name: Exclude<SandboxRuntimeName, 'docker'>;
-  private baseUrl: string;
+  protected baseUrl: string;
   private executePath: string;
   private healthPath: string;
   private agentPath: string;
-  private timeoutMs: number;
-  private defaultImage: string;
+  protected timeoutMs: number;
+  protected defaultImage: string;
+  protected headers: Record<string, string>;
 
   constructor(config: HttpSandboxRuntimeConfig) {
     this.name = config.name;
@@ -63,12 +71,14 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     this.agentPath = config.agentPath ?? '/v1/sandbox/agents';
     this.timeoutMs = config.timeoutMs ?? 30000;
     this.defaultImage = config.defaultImage ?? this.name;
+    this.headers = sandboxAuthHeaders(config.apiKeyEnv);
   }
 
   async health(): Promise<SandboxHealth> {
     try {
       const res = await fetch(`${this.baseUrl}${this.healthPath}`, {
         method: 'GET',
+        headers: this.headers,
         signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_TIMEOUT_MS)),
       });
       if (!res.ok) return { runtime: this.name, healthy: false, reason: `HTTP ${res.status}` };
@@ -82,7 +92,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     const start = Date.now();
     const res = await fetch(`${this.baseUrl}${this.executePath}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...this.headers, 'content-type': 'application/json' },
       body: JSON.stringify(input),
       signal: AbortSignal.timeout(input.timeoutMs ?? this.timeoutMs),
     });
@@ -148,12 +158,12 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     return { sandboxId: body.sandboxId ?? sandboxId, runtime: body.runtime ?? this.name, status: body.status ?? status };
   }
 
-  private async postJson<T>(path: string, input: unknown): Promise<T> {
+  protected async postJson<T>(path: string, input: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...this.headers, 'content-type': 'application/json' },
       body: JSON.stringify(input),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     const body = parseHttpSandboxJson<T>(text, path);
@@ -188,6 +198,149 @@ export class HttpSandboxRuntime implements SandboxRuntime {
 
 }
 
+export class AioSandboxRuntime extends HttpSandboxRuntime {
+  constructor(config: HttpSandboxRuntimeConfig) {
+    super({
+      ...config,
+      healthPath: config.healthPath ?? '/healthz',
+      executePath: config.executePath ?? '/v1/shell/exec',
+      defaultImage: config.defaultImage ?? 'ghcr.io/agent-infra/sandbox:latest',
+    });
+  }
+
+  override async execute(input: SandboxExecuteRequest): Promise<SandboxExecuteResult> {
+    if (input.mode === 'code' && input.language === 'python') {
+      return await this.executeAio(input, '/v1/jupyter/execute', { code: input.code });
+    }
+    const command = input.mode === 'command' ? input.command : codeShellCommand(input);
+    return await this.executeAio(input, '/v1/shell/exec', { command });
+  }
+
+  private async executeAio(
+    input: SandboxExecuteRequest,
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<SandboxExecuteResult> {
+    const start = Date.now();
+    const response = await this.postJson<AioSandboxResponse>(path, body, input.timeoutMs);
+    const data = isRecord(response.data) ? response.data : response as Record<string, unknown>;
+    const output = response.output ?? data['output'] ?? data['stdout'] ?? data['result'] ?? '';
+    const exitCode = response.exitCode ?? response.exit_code ?? numberValue(data['exitCode'])
+      ?? numberValue(data['exit_code']) ?? (response.success === false ? 1 : 0);
+    return {
+      sandboxId: stringValue(response.sandboxId) ?? stringValue(data['sandboxId']) ?? `aio-${Date.now()}`,
+      runtime: 'aiosandbox',
+      mode: input.mode,
+      language: input.mode === 'code' ? input.language : undefined,
+      image: 'ghcr.io/agent-infra/sandbox:latest',
+      command: input.mode === 'command' ? ['sh', '-c', input.command] : codeCommand(input),
+      exitCode,
+      output: Array.isArray(output) ? output.join('') : String(output),
+      timedOut: false,
+      metrics: {
+        executionTime: Date.now() - start,
+        memoryLimitMb: input.memoryMb ?? 0,
+        networkAccess: input.networkAccess ?? false,
+      },
+    };
+  }
+}
+
+export class OpenSandboxRuntime extends HttpSandboxRuntime {
+  constructor(config: HttpSandboxRuntimeConfig) {
+    super({
+      ...config,
+      healthPath: config.healthPath ?? '/v1/health',
+      executePath: config.executePath ?? '/v1/sandbox/execute',
+      agentPath: config.agentPath ?? '/v1/sandboxes',
+      defaultImage: config.defaultImage ?? 'opensandbox/code-interpreter:v1.1.0',
+    });
+  }
+
+  override async health(): Promise<SandboxHealth> {
+    const lifecycle = await this.getHealth('/v1/health');
+    if (lifecycle.healthy) return lifecycle;
+    const fallback = await this.getHealth('/healthz');
+    return fallback.healthy ? fallback : lifecycle;
+  }
+
+  override async createAgent(input: SandboxAgentCreateRequest): Promise<SandboxAgentLifecycleResult> {
+    const body = await this.postOpenSandbox<OpenSandboxCreateResponse>('/v1/sandboxes', {
+      image: input.image ?? this.defaultImage,
+      entrypoint: input.command ? ['sh', '-c', input.command] : undefined,
+      env: input.env,
+      timeout: input.timeoutMs ? `${Math.ceil(input.timeoutMs / 1000)}s` : undefined,
+      resources: {
+        memory: input.memoryMb ? `${input.memoryMb}Mi` : undefined,
+      },
+      metadata: {
+        agentId: input.agentId,
+        projectId: input.projectId,
+        controlPlane: 'agentzt',
+      },
+      extensions: {
+        networkAccess: input.networkAccess ?? false,
+        mounts: input.mounts ?? [],
+      },
+    });
+    const sandboxId = body.sandboxId ?? body.id ?? body.sandbox_id;
+    if (!sandboxId) throw new Error('OpenSandbox create response missing sandbox id');
+    return {
+      sandboxId,
+      runtime: 'opensandbox',
+      status: body.state === 'Running' ? 'started' : 'created',
+      image: body.image,
+      command: input.command ? ['sh', '-c', input.command] : undefined,
+    };
+  }
+
+  override async startAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    const body = await this.postOpenSandbox<OpenSandboxCreateResponse>(`/v1/sandboxes/${encodeURIComponent(sandboxId)}/resume`, {});
+    return { sandboxId: body.sandboxId ?? body.id ?? sandboxId, runtime: 'opensandbox', status: 'started' };
+  }
+
+  override async stopAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    await this.postOpenSandbox(`/v1/sandboxes/${encodeURIComponent(sandboxId)}/pause`, {});
+    return { sandboxId, runtime: 'opensandbox', status: 'stopped' };
+  }
+
+  override async destroyAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    await this.requestOpenSandbox('DELETE', `/v1/sandboxes/${encodeURIComponent(sandboxId)}`, undefined);
+    return { sandboxId, runtime: 'opensandbox', status: 'destroyed' };
+  }
+
+  private async getHealth(path: string): Promise<SandboxHealth> {
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers: this.headers,
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_TIMEOUT_MS)),
+      });
+      if (!res.ok) return { runtime: 'opensandbox', healthy: false, reason: `HTTP ${res.status}` };
+      return { runtime: 'opensandbox', healthy: true };
+    } catch (err) {
+      return { runtime: 'opensandbox', healthy: false, reason: (err as Error).message };
+    }
+  }
+
+  private async postOpenSandbox<T = unknown>(path: string, body: unknown): Promise<T> {
+    return await this.requestOpenSandbox<T>('POST', path, body);
+  }
+
+  private async requestOpenSandbox<T = unknown>(method: string, path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: { ...this.headers, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    const text = await res.text();
+    const parsed = parseHttpSandboxJson<T>(text, path);
+    if (!res.ok) throw new Error(`OpenSandbox ${method} ${path} failed: ${res.status}`);
+    return parsed;
+  }
+}
+
 function parseHttpSandboxJson<T>(text: string, path: string): T {
   if (!text) return {} as T;
   try {
@@ -209,29 +362,105 @@ function resolveOutput(body: HttpSandboxResponse): string {
   return [body.stdout, body.stderr].filter(Boolean).join('');
 }
 
-export function createSandboxRuntime(cfg: GatewayConfig['sandbox']): SandboxRuntime {
-  const runtime = cfg?.runtime ?? 'docker';
+type AioSandboxResponse = HttpSandboxResponse & {
+  data?: unknown;
+  exit_code?: number;
+};
+
+type OpenSandboxCreateResponse = {
+  id?: string;
+  sandboxId?: string;
+  sandbox_id?: string;
+  state?: string;
+  image?: string;
+};
+
+function codeCommand(input: Extract<SandboxExecuteRequest, { mode: 'code' }>): string[] {
+  if (input.language === 'python') return ['python3', '-c', input.code];
+  if (input.language === 'javascript') return ['node', '-e', input.code];
+  return ['bash', '-c', input.code];
+}
+
+function codeShellCommand(input: Extract<SandboxExecuteRequest, { mode: 'code' }>): string {
+  return codeCommand(input).map(shellQuote).join(' ');
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+function sandboxAuthHeaders(apiKeyEnv?: string): Record<string, string> {
+  if (!apiKeyEnv) return {};
+  const token = process.env[apiKeyEnv];
+  if (!token) return {};
+  return {
+    authorization: ['Bearer', token].join(' '),
+    'OPEN-SANDBOX-API-KEY': token,
+    'X-AIO-API-Key': token,
+  };
+}
+
+function runtimeProvider(cfg: GatewayConfig['sandbox'], selection: SandboxRuntimeSelection = {}): SandboxRuntimeProviderConfig | undefined {
+  const providers = (cfg?.runtimes ?? []).filter((provider) => provider.enabled !== false);
+  const target = cfg?.runtime ?? 'docker';
+  const candidates = providers.filter((provider) =>
+    provider.name === target || provider.type === target);
+  const pool = candidates.length ? candidates : providers;
+  const compatible = pool.filter((provider) => providerMatches(provider, selection));
+  return [...compatible].sort((a, b) => (b.capacity ?? 1) - (a.capacity ?? 1))[0];
+}
+
+function providerMatches(provider: SandboxRuntimeProviderConfig, selection: SandboxRuntimeSelection): boolean {
+  if (selection.role && provider.allowedRoles && !provider.allowedRoles.includes(selection.role)) return false;
+  if (selection.projectId && provider.allowedProjectIds && !provider.allowedProjectIds.includes(selection.projectId)) return false;
+  if (selection.capability && provider.capabilities && !provider.capabilities.includes(selection.capability)) return false;
+  if (selection.resource && provider.capabilities && !provider.capabilities.includes(selection.resource)) return false;
+  return true;
+}
+
+export function createSandboxRuntime(
+  cfg: GatewayConfig['sandbox'],
+  selection: SandboxRuntimeSelection = {},
+): SandboxRuntime {
+  const provider = runtimeProvider(cfg, selection);
+  const runtime = provider?.type ?? cfg?.runtime ?? 'docker';
   if (runtime === 'docker') {
     const dockerConfig: DockerSandboxConfig = {
       socketPath: cfg?.dockerSocketPath,
       apiVersion: cfg?.dockerApiVersion,
-      defaultImage: cfg?.defaultImage,
+      defaultImage: provider?.defaultImage ?? cfg?.defaultImage,
       images: cfg?.images,
       timeoutMs: cfg?.timeoutMs,
       maxTimeoutMs: cfg?.maxTimeoutMs,
       memoryMb: cfg?.memoryMb,
       maxMemoryMb: cfg?.maxMemoryMb,
-      networkAccess: cfg?.networkAccess,
+      networkAccess: provider?.networkPolicy?.defaultAccess ?? cfg?.networkAccess,
     };
     return new DockerSandboxRuntime(dockerConfig);
   }
-  return new HttpSandboxRuntime({
+  const config = {
     name: runtime,
-    baseUrl: cfg?.baseUrl ?? 'http://localhost:8080',
-    executePath: cfg?.executePath,
-    healthPath: cfg?.healthPath,
-    agentPath: cfg?.agentPath,
+    baseUrl: provider?.baseUrl ?? cfg?.baseUrl ?? 'http://localhost:8080',
+    executePath: provider?.executePath ?? cfg?.executePath,
+    healthPath: provider?.healthPath ?? cfg?.healthPath,
+    agentPath: provider?.agentPath ?? cfg?.agentPath,
     timeoutMs: cfg?.timeoutMs,
-    defaultImage: cfg?.defaultImage,
-  });
+    defaultImage: provider?.defaultImage ?? cfg?.defaultImage,
+    apiKeyEnv: provider?.apiKeyEnv,
+  };
+  if (runtime === 'aiosandbox') return new AioSandboxRuntime(config);
+  if (runtime === 'opensandbox') return new OpenSandboxRuntime(config);
+  return new HttpSandboxRuntime(config);
 }

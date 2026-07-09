@@ -136,6 +136,7 @@ function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteReques
 
 let sandboxClient: AIOsandboxClient | undefined;
 let sandboxRuntime: SandboxRuntime | undefined;
+let sandboxRuntimeKey: string | undefined;
 
 async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOsandboxClient> {
   if (!sandboxClient) {
@@ -144,9 +145,23 @@ async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOs
   return sandboxClient;
 }
 
-function getSandboxRuntime(): SandboxRuntime {
-  if (!sandboxRuntime) {
-    sandboxRuntime = createSandboxRuntime(loadGatewayConfig().sandbox);
+function getSandboxRuntime(ctx: ToolContext, capability = 'sandbox.execute'): SandboxRuntime {
+  const cfg = loadGatewayConfig().sandbox;
+  const key = [
+    cfg?.runtime ?? 'docker',
+    cfg?.baseUrl ?? '',
+    ctx.role,
+    ctx.governance?.projectId ?? '',
+    capability,
+  ].join('|');
+  if (!sandboxRuntime || sandboxRuntimeKey !== key) {
+    sandboxRuntime = createSandboxRuntime(cfg, {
+      role: ctx.role,
+      projectId: ctx.governance?.projectId,
+      resource: capability,
+      capability,
+    });
+    sandboxRuntimeKey = key;
   }
   return sandboxRuntime;
 }
@@ -175,6 +190,7 @@ function decideSandboxPolicy(
   if (policy.allowedRoles && !policy.allowedRoles.includes(ctx.role)) {
     return { allow: false, reason: `role "${ctx.role}" is not allowed to execute sandbox workloads`, meta };
   }
+
   if (policy.allowedProjectIds) {
     const projectId = ctx.governance?.projectId;
     if (!projectId || !policy.allowedProjectIds.includes(projectId)) {
@@ -206,76 +222,93 @@ function decideSandboxPolicy(
   return { allow: true, reason: 'sandbox policy allowed', meta };
 }
 
+async function executeSandboxRequest(
+  request: SandboxExecuteRequest,
+  ctx: ToolContext,
+  capability = 'sandbox.execute',
+): Promise<ToolResult> {
+  const cfg = loadGatewayConfig().sandbox;
+  if (cfg?.enabled === false) return { ok: false, error: 'sandbox runtime is disabled' };
+  const policyDecision = decideSandboxPolicy(request, ctx, cfg?.policy);
+  if (!policyDecision.allow) {
+    return {
+      ok: false,
+      error: policyDecision.reason,
+      auditMeta: {
+        sandbox: {
+          policyDecision: 'deny',
+          policyReason: policyDecision.reason,
+          policy: policyDecision.meta,
+          capability,
+        },
+      },
+    };
+  }
+  const result = await getSandboxRuntime(ctx, capability).execute(request);
+  const success = result.exitCode === 0 && !result.timedOut;
+  return {
+    ok: success,
+    output: {
+      ...result,
+      agentId: ctx.agentId,
+      requestId: ctx.requestId,
+    },
+    error: success
+      ? undefined
+      : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
+    auditMeta: {
+      sandbox: {
+        runtime: result.runtime,
+        sandboxId: result.sandboxId,
+        policyDecision: 'allow',
+        policyReason: policyDecision.reason,
+        policy: policyDecision.meta,
+        capability,
+        resourceLimits: {
+          timeoutMs: request.timeoutMs !== undefined ? request.timeoutMs : cfg?.timeoutMs,
+          memoryMb: result.metrics.memoryLimitMb,
+        },
+        network: {
+          access: result.metrics.networkAccess,
+          defaultAccess: cfg?.networkAccess ?? false,
+        },
+        filesystem: {
+          access: cfg?.filesystemAccess ?? [],
+        },
+      },
+    },
+  };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function heredocCommand(path: string, content: string): string {
+  let marker = 'AGENTZT_FILE_WRITE';
+  for (let i = 0; content.includes(marker); i++) {
+    marker = `AGENTZT_FILE_WRITE_${i}`;
+  }
+  return `cat > ${shellQuote(path)} <<'${marker}'\n${content}\n${marker}`;
+}
+
 const SANDBOX_TOOLS: Record<string, ToolDef> = {
   'sandbox.execute': {
     name: 'sandbox.execute',
     description: 'Create a Docker sandbox, execute one command or code snippet, return output, then clean it up.',
     validate: validateSandboxExecute,
     run: async (a, ctx) => {
-      const cfg = loadGatewayConfig().sandbox;
-      if (cfg?.enabled === false) return { ok: false, error: 'sandbox runtime is disabled' };
       const request = sandboxExecuteRequest(a);
-      const policyDecision = decideSandboxPolicy(request, ctx, cfg?.policy);
-      if (!policyDecision.allow) {
-        return {
-          ok: false,
-          error: policyDecision.reason,
-          auditMeta: {
-            sandbox: {
-              policyDecision: 'deny',
-              policyReason: policyDecision.reason,
-              policy: policyDecision.meta,
-            },
-          },
-        };
-      }
-      const result = await getSandboxRuntime().execute(request);
-      const success = result.exitCode === 0 && !result.timedOut;
-      return {
-        ok: success,
-        output: {
-          ...result,
-          agentId: ctx.agentId,
-          requestId: ctx.requestId,
-        },
-        error: success
-          ? undefined
-          : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
-        auditMeta: {
-          sandbox: {
-            runtime: result.runtime,
-            sandboxId: result.sandboxId,
-            policyDecision: 'allow',
-            policyReason: policyDecision.reason,
-            policy: policyDecision.meta,
-            resourceLimits: {
-              timeoutMs: request.timeoutMs !== undefined ? request.timeoutMs : cfg?.timeoutMs,
-              memoryMb: result.metrics.memoryLimitMb,
-            },
-            network: {
-              access: result.metrics.networkAccess,
-              defaultAccess: cfg?.networkAccess ?? false,
-            },
-            filesystem: {
-              access: cfg?.filesystemAccess ?? [],
-            },
-          },
-        },
-      };
+      return await executeSandboxRequest(request, ctx);
     },
   },
 
   'sandbox.shell': {
     name: 'sandbox.shell',
-    description: 'Execute a shell command in the isolated AIOsandbox environment.',
+    description: 'Execute a shell command through the unified sandbox.execute runtime path.',
     validate: (a) => requireString(a, 'command', 4096),
     run: async (a, ctx) => {
-      const client = await getSandboxClient();
-      const result = await client.shellExec(String(a['command']), a['cwd'] as string | undefined);
-      if (result.success && result.data) {
-        return { ok: result.data.exitCode === 0, output: result.data };
-      }
-      return { ok: false, error: result.error };
+      return await executeSandboxRequest({ mode: 'command', command: String(a['command']) }, ctx, 'sandbox.shell');
     },
   },
 
@@ -283,13 +316,11 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.file.read',
     description: 'Read a file from the AIOsandbox filesystem.',
     validate: (a) => requireString(a, 'file', 4096),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.fileRead(String(a['file']));
-      if (result.success && result.data) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'command',
+        command: `cat ${shellQuote(String(a['file']))}`,
+      }, ctx, 'sandbox.file.read');
     },
   },
 
@@ -297,13 +328,11 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.file.write',
     description: 'Write content to a file in the AIOsandbox filesystem.',
     validate: (a) => requireString(a, 'file', 4096) ?? requireString(a, 'content', 1024 * 1024),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.fileWrite(String(a['file']), String(a['content']));
-      if (result.success) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'command',
+        command: heredocCommand(String(a['file']), String(a['content'])),
+      }, ctx, 'sandbox.file.write');
     },
   },
 
@@ -345,13 +374,12 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.jupyter.execute',
     description: 'Execute Python code in the sandbox Jupyter environment.',
     validate: (a) => requireString(a, 'code', 1024 * 100),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.jupyterExecute(String(a['code']));
-      if (result.success && result.data) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'code',
+        language: 'python',
+        code: String(a['code']),
+      }, ctx, 'sandbox.jupyter.execute');
     },
   },
 };

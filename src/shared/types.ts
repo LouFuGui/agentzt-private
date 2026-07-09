@@ -199,9 +199,22 @@ export type SandboxRuntimeProviderConfig = {
   baseUrl?: string;
   healthPath?: string;
   executePath?: string;
+  agentPath?: string;
+  apiKeyEnv?: string;
   enabled?: boolean;
   capacity?: number;
   defaultImage?: string;
+  allowedRoles?: string[];
+  allowedProjectIds?: string[];
+  capabilities?: string[];
+  networkPolicy?: {
+    defaultAccess?: boolean;
+    egress?: string[];
+  };
+  filesystemPolicy?: {
+    mounts?: string[];
+    readonly?: boolean;
+  };
 };
 
 export type FalcoPriority =
