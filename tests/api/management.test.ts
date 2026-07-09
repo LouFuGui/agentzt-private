@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -337,6 +337,24 @@ describe('enterprise management API', () => {
     expect(state.sandboxRuns[0]).toMatchObject({
       args: { command: 'echo debug' },
       ctx: { agentId: 'management:admin-01', role: 'admin' },
+    });
+    const audit = readFileSync(join(state.auditDir, 'gateway-audit.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      agentId: 'management:admin-01',
+      role: 'admin',
+      action: 'tool.call',
+      resource: 'sandbox.execute',
+      decision: 'allow',
+      reason: 'management sandbox execute',
+      userId: 'admin-01',
+      meta: {
+        ok: true,
+        authVia: 'management',
+      },
     });
   });
 });

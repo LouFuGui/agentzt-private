@@ -159,3 +159,10 @@
   - Agent 工具入口覆盖审计 meta。
   - sandbox policy 拒绝命令时不触发 runtime 执行。
 - 本轮针对性验证：`npx vitest run tests/gateway/sandbox.test.ts tests/api/management.test.ts` 通过，`npm run typecheck` 通过。
+
+### 智能体沙盒管理调试审计补齐
+
+- 本轮继续推进 sandbox.execute 最小闭环的审计一致性：
+  - 管理 API 调试入口 `/api/v1/sandbox/execute` 现在会将执行结果写入 gateway audit hash chain。
+  - 审计记录复用 `tool.call` / `sandbox.execute` 资源维度，并标记 `authVia: management`、管理用户 ID、执行结果与 sandbox audit meta。
+  - 补充管理 API 测试，验证管理员调试执行会落审计日志，便于后续控制台调试与 Agent 工具调用在同一审计视图中追踪。

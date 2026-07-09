@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { bearerToken, readJson, sendError, sendJson } from '../shared/http.ts';
 import { AUDIT_DIR } from '../shared/paths.ts';
-import { verifyChain } from '../shared/audit.ts';
+import { AuditLogger, verifyChain } from '../shared/audit.ts';
 import { loadPolicy, loadRegistry, savePolicy, saveRegistry } from '../shared/config.ts';
 import type {
   AgentLifecycleStatus,
@@ -37,6 +37,8 @@ const ROLE_RANK: Record<UserRole, number> = {
 };
 
 const AGENT_STATUSES = ['active', 'disabled', 'revoked'] as const;
+let auditLogger: AuditLogger | undefined;
+let auditLoggerFile: string | undefined;
 
 function roleAtLeast(actual: UserRole, required: UserRole): boolean {
   return ROLE_RANK[actual] >= ROLE_RANK[required];
@@ -105,7 +107,17 @@ function auditEvents(limit: number, filters: AuditFilters = {}): AuditEvent[] {
     const event = JSON.parse(line) as AuditEvent;
     if (matchesAuditFilters(event, filters)) events.push(event);
   }
+
   return events.reverse();
+}
+
+function recordManagementAudit(event: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): void {
+  const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
+  if (!auditLogger || auditLoggerFile !== file) {
+    auditLogger = new AuditLogger(file);
+    auditLoggerFile = file;
+  }
+  auditLogger.record(event);
 }
 
 function projectIds(policy: PolicyDoc): string[] {
@@ -449,19 +461,64 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
   const { getTool } = await import('../gateway/tool-registry.ts');
   const tool = getTool('sandbox.execute');
   if (!tool) {
+    recordManagementAudit({
+      requestId: `management-sandbox-${Date.now()}`,
+      agentId: `management:${auth.userId}`,
+      role: auth.role,
+      action: 'tool.call',
+      resource: 'sandbox.execute',
+      decision: 'deny',
+      reason: 'sandbox.execute is not implemented',
+      userId: auth.userId,
+      meta: { management: true },
+    });
     sendError(res, 404, 'not_found', 'sandbox.execute is not implemented');
     return true;
   }
   const validationError = tool.validate(args);
   if (validationError) {
+    recordManagementAudit({
+      requestId: `management-sandbox-${Date.now()}`,
+      agentId: `management:${auth.userId}`,
+      role: auth.role,
+      action: 'tool.call',
+      resource: 'sandbox.execute',
+      decision: 'deny',
+      reason: `parameter validation failed: ${validationError}`,
+      userId: auth.userId,
+      governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+      meta: { management: true },
+    });
     sendError(res, 400, 'invalid_request', validationError);
     return true;
   }
+  const requestId = `management-sandbox-${Date.now()}`;
+  const started = Date.now();
   const result = await tool.run(args, {
     agentId: `management:${auth.userId}`,
     role: auth.role,
-    requestId: `management-sandbox-${Date.now()}`,
+    requestId,
     governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+  });
+  const { auditMeta } = result;
+  const sandboxMeta = auditMeta?.['sandbox'];
+  const policyDecision = isObject(sandboxMeta) ? sandboxMeta['policyDecision'] : undefined;
+  recordManagementAudit({
+    requestId,
+    agentId: `management:${auth.userId}`,
+    role: auth.role,
+    action: 'tool.call',
+    resource: 'sandbox.execute',
+    decision: policyDecision === 'deny' ? 'deny' : 'allow',
+    reason: result.error ?? 'management sandbox execute',
+    latencyMs: Date.now() - started,
+    userId: auth.userId,
+    governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+    meta: {
+      ok: result.ok,
+      authVia: 'management',
+      ...auditMeta,
+    },
   });
   const wireResult = { ok: result.ok, output: result.output, error: result.error };
   sendJson(res, wireResult.ok ? 200 : 400, wireResult);
