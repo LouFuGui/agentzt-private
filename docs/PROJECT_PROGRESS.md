@@ -144,3 +144,18 @@
 - 本轮用户再次强调“工具执行沙盒、Agent 运行沙盒、模型访问前后安全沙盒、企业沙盒编排平台”是主线，其中首要交付仍是最小闭环：只接入现有 Docker 沙盒 runtime，跑通“创建沙盒 → 执行命令/代码 → 返回结果 → 审计”。
 - 首批实现聚焦 Agent 工具入口 `sandbox.execute`：通过 Gateway 既有 `/v1/tools/{name}` 路径进入 RBAC/ABAC/OPA/审计链，工具内部使用 Docker Engine HTTP API 创建一次性容器执行 command/code，默认禁用网络并施加超时与内存上限。
 - 后续仍需补齐管理 API 调试入口、命令/语言白名单、project 级策略、长任务/会话复用、文件处理与 AIOsandbox/opensandbox 编排适配。
+
+### 智能体沙盒 Runtime 抽象与策略补强
+
+- 本轮按“实施计划”推进首批最小代码闭环：
+  - 新增统一 `SandboxRuntime` adapter 抽象，现有 Docker 执行路径改为 `docker` runtime adapter。
+  - 新增通用 HTTP sandbox runtime adapter，支持 `aiosandbox` / `opensandbox` / `http` 通过 `baseUrl + executePath` 接入外部沙盒服务，首版只覆盖 `execute` 能力。
+  - `sandbox.execute` 继续作为 Agent 工具统一入口，并复用管理 API 调试入口 `/api/v1/sandbox/execute`。
+  - Gateway sandbox 配置新增 `executePath`、`filesystemAccess` 与 `policy`，首批策略覆盖命令白名单、语言白名单、资源上限、网络开关，并保留后续 role/project 细粒度控制字段。
+  - `tool.call` 审计 meta 扩展记录 sandbox runtime、sandboxId、policy decision、资源限制、网络 posture 与文件系统 posture。
+- 新增/补强测试覆盖：
+  - Docker runtime adapter 继续覆盖 create/start/wait/logs/remove 路径。
+  - HTTP runtime adapter 覆盖 OpenSandbox/AIOsandbox-style execute 调用。
+  - Agent 工具入口覆盖审计 meta。
+  - sandbox policy 拒绝命令时不触发 runtime 执行。
+- 本轮针对性验证：`npx vitest run tests/gateway/sandbox.test.ts tests/api/management.test.ts` 通过，`npm run typecheck` 通过。
