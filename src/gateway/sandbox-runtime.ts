@@ -10,6 +10,7 @@ import type {
 } from './docker-sandbox.ts';
 
 export type SandboxRuntimeName = 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+// Health checks stay short even for long-running execution runtimes.
 const SANDBOX_HEALTH_TIMEOUT_MS = 5000;
 
 export type SandboxRuntime = {

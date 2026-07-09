@@ -77,6 +77,9 @@ import type { AuditEvent } from '../shared/types.ts';
 
 const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
 const SANDBOX_VALIDATION_MAX_SNIPPETS = 3;
+const HEREDOC_MARKER_COLLISION_MAX_RETRIES = 10;
+const DEFAULT_SANDBOX_HIGH_RISK_PATTERNS = ['\\brm\\s+-rf', '\\bcurl\\s+', '\\bwget\\s+', '\\bchmod\\s+', '\\bssh\\s+', '\\bscp\\s+'];
+const highRiskPatternCache = new Map<string, RegExp[]>();
 
 function parseRiskLevel(value: unknown): RiskLevel | undefined {
   return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
@@ -93,7 +96,7 @@ type SandboxValidationFinding = {
 
 function extractSandboxValidationRequests(
   text: string,
-  highRiskPatterns: string[] = ['\\brm\\s+-rf', '\\bcurl\\s+', '\\bwget\\s+', '\\bchmod\\s+', '\\bssh\\s+', '\\bscp\\s+'],
+  highRiskPatterns: string[] = DEFAULT_SANDBOX_HIGH_RISK_PATTERNS,
 ): Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> {
   const findings: Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> = [];
   const fence = /```(bash|sh|shell|python|py|javascript|js)\s*\n([\s\S]*?)```/gi;
@@ -106,17 +109,27 @@ function extractSandboxValidationRequests(
         : 'bash';
     findings.push({ kind, code: match[2] ?? '' });
   }
-  if (findings.length === 0 && highRiskPatterns.some((pattern) => new RegExp(pattern, 'i').test(text))) {
+  const highRiskRegexes = compiledHighRiskPatterns(highRiskPatterns);
+  if (findings.length === 0 && highRiskRegexes.some((pattern) => pattern.test(text))) {
     findings.push({ kind: 'bash', code: text });
+  }
+
+  function compiledHighRiskPatterns(patterns: string[]): RegExp[] {
+    const key = patterns.join('\n');
+    const cached = highRiskPatternCache.get(key);
+    if (cached) return cached;
+    const compiled = patterns.map((pattern) => new RegExp(pattern, 'i'));
+    highRiskPatternCache.set(key, compiled);
+    return compiled;
   }
   return findings.slice(0, SANDBOX_VALIDATION_MAX_SNIPPETS);
 }
 
 function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
-  let marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
-  for (let attempts = 0; code.includes(marker); attempts++) {
-    if (attempts >= 10) throw new Error('unable to create unique sandbox validation marker');
-    marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  let heredocMarker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  for (let attempts = 0; code.includes(heredocMarker); attempts++) {
+    if (attempts >= HEREDOC_MARKER_COLLISION_MAX_RETRIES) throw new Error('unable to create unique sandbox validation marker');
+    heredocMarker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
   }
   const file = kind === 'python' ? '/tmp/agentzt-validate.py'
     : kind === 'javascript' ? '/tmp/agentzt-validate.js'
@@ -126,7 +139,7 @@ function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string)
       : `sh -n ${file}`;
   return {
     mode: 'command',
-    command: `cat > ${file} <<'${marker}'\n${code}\n${marker}\n${tool}`,
+    command: `cat > ${file} <<'${heredocMarker}'\n${code}\n${heredocMarker}\n${tool}`,
   };
 }
 

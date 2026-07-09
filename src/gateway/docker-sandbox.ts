@@ -3,7 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
 const log = makeLogger('docker-sandbox');
-// Exit code 124 follows the GNU coreutils timeout(1) convention.
+// Exit code 124 follows timeout(1), so callers can classify timeouts apart from generic failures.
 const SANDBOX_TIMEOUT_EXIT_CODE_GNU_COMPAT = 124;
 
 export type SandboxExecuteMode = 'command' | 'code';

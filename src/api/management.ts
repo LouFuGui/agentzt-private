@@ -192,6 +192,7 @@ function sandboxRuntimeCacheKey(cfg: ReturnType<typeof loadGatewayConfig>): stri
     sandbox?.runtime ?? 'docker',
     sandbox?.baseUrl ?? '',
     sandbox?.dockerSocketPath ?? '',
+    sandbox?.healthPath ?? '',
     sandbox?.executePath ?? '',
     sandbox?.agentPath ?? '',
   ].join('|');

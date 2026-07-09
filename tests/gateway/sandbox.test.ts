@@ -151,7 +151,12 @@ async function makeHttpSandboxApi(): Promise<{
   const requests: HttpSandboxRequest[] = [];
   const server = createServer(async (req, res) => {
     const raw = await readBody(req);
-    const body = raw ? JSON.parse(raw) as HttpSandboxRequest : { mode: 'command' as const };
+    if (!raw && req.method === 'POST') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'missing test request body' }));
+      return;
+    }
+    const body = JSON.parse(raw) as HttpSandboxRequest;
     requests.push(body);
     if (req.method === 'POST' && req.url === '/v1/sandbox/execute') {
       res.writeHead(200, { 'content-type': 'application/json' });
