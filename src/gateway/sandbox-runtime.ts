@@ -1,4 +1,4 @@
-import { DockerSandboxRuntime } from './docker-sandbox.ts';
+import { dockerSandboxCommandFor, DockerSandboxRuntime } from './docker-sandbox.ts';
 import type { GatewayConfig } from '../shared/types.ts';
 import type {
   DockerSandboxConfig,
@@ -59,14 +59,14 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     const text = await res.text();
     const body = text ? JSON.parse(text) as HttpSandboxResponse : {};
     const exitCode = resolveExitCode(res.ok, body);
-    const output = body.output ?? [body.stdout, body.stderr].filter(Boolean).join('');
+    const output = resolveOutput(body);
     return {
       sandboxId: body.sandboxId ?? body.sandbox_id ?? `remote-${Date.now()}`,
       runtime: this.name,
       mode: input.mode,
       language: input.mode === 'code' ? input.language : undefined,
       image: body.image ?? this.defaultImage,
-      command: body.command ?? commandFor(input),
+      command: body.command ?? dockerSandboxCommandFor(input),
       exitCode,
       output: String(output ?? ''),
       timedOut: body.timedOut ?? false,
@@ -84,6 +84,11 @@ function resolveExitCode(httpOk: boolean, body: HttpSandboxResponse): number {
   if (body.exit_code !== undefined) return body.exit_code;
   const reportedOk = body.ok ?? body.success ?? httpOk;
   return httpOk && reportedOk ? 0 : 1;
+}
+
+function resolveOutput(body: HttpSandboxResponse): string {
+  if (body.output !== undefined) return String(body.output);
+  return [body.stdout, body.stderr].filter(Boolean).join('');
 }
 
 export function createSandboxRuntime(cfg: GatewayConfig['sandbox']): SandboxRuntime {
@@ -109,11 +114,4 @@ export function createSandboxRuntime(cfg: GatewayConfig['sandbox']): SandboxRunt
     timeoutMs: cfg?.timeoutMs,
     defaultImage: cfg?.defaultImage,
   });
-}
-
-function commandFor(input: SandboxExecuteRequest): string[] {
-  if (input.mode === 'command') return ['sh', '-c', input.command];
-  if (input.language === 'python') return ['python3', '-c', input.code];
-  if (input.language === 'javascript') return ['node', '-e', input.code];
-  return ['bash', '-c', input.code];
 }

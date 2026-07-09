@@ -3,7 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
 const log = makeLogger('docker-sandbox');
-// 124 matches timeout(1), giving callers a familiar way to classify timeouts.
+// 124 matches GNU coreutils timeout(1), giving callers a familiar way to classify timeouts.
 const SANDBOX_TIMEOUT_EXIT_CODE = 124;
 
 export type SandboxExecuteMode = 'command' | 'code';
@@ -233,10 +233,7 @@ export class DockerSandboxRuntime {
   }
 
   private commandFor(input: SandboxExecuteRequest): string[] {
-    if (input.mode === 'command') return ['sh', '-c', input.command];
-    if (input.language === 'python') return ['python3', '-c', input.code];
-    if (input.language === 'javascript') return ['node', '-e', input.code];
-    return ['bash', '-c', input.code];
+    return dockerSandboxCommandFor(input);
   }
 
   private async kill(containerId: string): Promise<void> {
@@ -254,4 +251,11 @@ export class DockerSandboxRuntime {
       log.warn(`failed to remove sandbox container ${containerId}: ${(err as Error).message}`);
     }
   }
+}
+
+export function dockerSandboxCommandFor(input: SandboxExecuteRequest): string[] {
+  if (input.mode === 'command') return ['sh', '-c', input.command];
+  if (input.language === 'python') return ['python3', '-c', input.code];
+  if (input.language === 'javascript') return ['node', '-e', input.code];
+  return ['bash', '-c', input.code];
 }

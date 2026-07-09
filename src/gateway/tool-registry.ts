@@ -175,7 +175,7 @@ function decideSandboxPolicy(
     }
   }
   if (input.mode === 'command' && policy.allowedCommands) {
-    const commandName = input.command.trim().split(/\s+/, 1)[0] as string;
+    const commandName = input.command.trim().split(/\s+/, 1)[0] ?? '';
     meta['commandName'] = commandName;
     if (!policy.allowedCommands.includes(commandName)) {
       return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };

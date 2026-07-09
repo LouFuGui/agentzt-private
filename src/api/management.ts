@@ -441,6 +441,10 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
   if (!auth) return true;
 
   const body = await readJson<Record<string, unknown>>(req);
+  if (body['projectId'] !== undefined && (typeof body['projectId'] !== 'string' || body['projectId'].trim() === '')) {
+    sendError(res, 400, 'invalid_request', 'projectId must be a non-empty string when provided');
+    return true;
+  }
   const args = isObject(body['arguments']) ? body['arguments'] as Record<string, unknown> : body;
   const { getTool } = await import('../gateway/tool-registry.ts');
   const tool = getTool('sandbox.execute');

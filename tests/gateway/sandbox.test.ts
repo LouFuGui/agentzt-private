@@ -27,6 +27,16 @@ type HttpSandboxRequest = {
   code?: string;
 };
 
+type SandboxToolResponse = {
+  ok: boolean;
+  output: {
+    output: string;
+    metrics: {
+      networkAccess: boolean;
+    };
+  };
+};
+
 function makeRoot(): string {
   const root = join(tmpdir(), `agentzt-sandbox-${randomUUID()}`);
   roots.push(root);
@@ -360,7 +370,7 @@ describe('sandbox.execute gateway tool', () => {
           },
           body: JSON.stringify({ arguments: { command: 'echo audited', memoryMb: 128 } }),
         });
-        const execBody = await execResp.json() as { ok: boolean; output: { output: string; metrics: { networkAccess: boolean } } };
+        const execBody = await execResp.json() as SandboxToolResponse;
 
         expect(execResp.status).toBe(200);
         expect(execBody.ok).toBe(true);
