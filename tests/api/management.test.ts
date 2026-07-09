@@ -15,6 +15,29 @@ const state = vi.hoisted(() => ({
     args: Record<string, unknown>;
     ctx: { agentId: string; role: string; requestId: string };
   }>,
+  gateway: {
+    port: 0,
+    issuer: 'agentzt-gateway',
+    tokenTtlSeconds: 300,
+    assertionMaxAgeSeconds: 60,
+    upstream: {
+      mode: 'mock' as const,
+      anthropicBaseUrl: 'https://api.anthropic.com',
+      apiKeyEnv: 'AGENTZT_UPSTREAM_ANTHROPIC_KEY',
+    },
+    sandbox: {
+      enabled: true,
+      runtime: 'http' as const,
+      baseUrl: 'http://127.0.0.1:1',
+      executePath: '/v1/sandbox/execute',
+      healthPath: '/v1/sandbox/health',
+      agentPath: '/v1/sandbox/agents',
+      autoStart: false,
+      networkAccess: false,
+      filesystemAccess: [],
+      runtimes: [{ name: 'local-http', type: 'http' as const, enabled: true, capacity: 1 }],
+    },
+  },
   policy: {
     version: 1,
     defaultDeny: true,
@@ -49,6 +72,7 @@ vi.mock('../../src/shared/paths.ts', () => ({
 }));
 
 vi.mock('../../src/shared/config.ts', () => ({
+  loadGatewayConfig: () => state.gateway,
   loadPolicy: () => state.policy,
   savePolicy: (policy: PolicyDoc) => {
     state.policy = JSON.parse(JSON.stringify(policy)) as PolicyDoc;
@@ -110,6 +134,14 @@ async function request(port: number, method: string, path: string, body?: unknow
   };
 }
 
+function readBody(req: Parameters<Parameters<typeof createServer>[0]>[0]): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
+}
+
 describe('enterprise management API', () => {
   let server: ReturnType<typeof createServer>;
   let port: number;
@@ -132,6 +164,29 @@ describe('enterprise management API', () => {
           models: ['claude-sonnet-4-6'],
           tools: ['kb.search'],
         },
+      },
+    };
+    state.gateway = {
+      port: 0,
+      issuer: 'agentzt-gateway',
+      tokenTtlSeconds: 300,
+      assertionMaxAgeSeconds: 60,
+      upstream: {
+        mode: 'mock',
+        anthropicBaseUrl: 'https://api.anthropic.com',
+        apiKeyEnv: 'AGENTZT_UPSTREAM_ANTHROPIC_KEY',
+      },
+      sandbox: {
+        enabled: true,
+        runtime: 'http',
+        baseUrl: 'http://127.0.0.1:1',
+        executePath: '/v1/sandbox/execute',
+        healthPath: '/v1/sandbox/health',
+        agentPath: '/v1/sandbox/agents',
+        autoStart: false,
+        networkAccess: false,
+        filesystemAccess: [],
+        runtimes: [{ name: 'local-http', type: 'http', enabled: true, capacity: 1 }],
       },
     };
     state.registry = {
@@ -369,5 +424,104 @@ describe('enterprise management API', () => {
     expect(response.status).toBe(400);
     expect(response.body.error.message).toBe('parameter "command" must include an executable name');
     expect(state.sandboxRuns).toHaveLength(0);
+  });
+
+  it('reports sandbox runtime registry health', async () => {
+    const sandboxApi = createServer(async (req, res) => {
+      if (req.method === 'GET' && req.url === '/v1/sandbox/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => sandboxApi.listen(0, '127.0.0.1', () => resolve()));
+    const address = sandboxApi.address() as AddressInfo;
+    state.gateway.sandbox.baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const response = await request(port, 'GET', '/api/v1/sandbox/runtimes', undefined, {
+        'x-user-id': 'viewer-01',
+        'x-user-role': 'viewer',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        selected: 'http',
+        health: { runtime: 'http', healthy: true },
+        runtimes: [{ name: 'local-http', type: 'http', enabled: true }],
+      });
+    } finally {
+      sandboxApi.close();
+    }
+  });
+
+  it('manages agent process sandbox lifecycle through runtime adapter', async () => {
+    const calls: string[] = [];
+    const sandboxApi = createServer(async (req, res) => {
+      const raw = await readBody(req);
+      calls.push(`${req.method} ${req.url} ${raw}`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.method === 'POST' && req.url === '/v1/sandbox/agents') {
+        res.statusCode = 201;
+        res.end(JSON.stringify({ sandboxId: 'agent-sbx-1', runtime: 'http', status: 'created', image: 'alpine' }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/v1/sandbox/agents/agent-sbx-1/start') {
+        res.end(JSON.stringify({ sandboxId: 'agent-sbx-1', runtime: 'http', status: 'started' }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/v1/sandbox/agents/agent-sbx-1/exec') {
+        res.end(JSON.stringify({ sandboxId: 'agent-sbx-1', output: 'ran', exitCode: 0 }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/v1/sandbox/agents/agent-sbx-1/stop') {
+        res.end(JSON.stringify({ sandboxId: 'agent-sbx-1', runtime: 'http', status: 'stopped' }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/v1/sandbox/agents/agent-sbx-1/destroy') {
+        res.end(JSON.stringify({ sandboxId: 'agent-sbx-1', runtime: 'http', status: 'destroyed' }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+    await new Promise<void>((resolve) => sandboxApi.listen(0, '127.0.0.1', () => resolve()));
+    const address = sandboxApi.address() as AddressInfo;
+    state.gateway.sandbox.baseUrl = `http://127.0.0.1:${address.port}`;
+    const headers = { 'x-user-id': 'admin-01', 'x-user-role': 'admin' };
+    try {
+      const created = await request(port, 'POST', '/api/v1/sandbox/agents', { image: 'alpine', projectId: 'agentzt' }, headers);
+      const started = await request(port, 'POST', '/api/v1/sandbox/agents/agent-sbx-1/start', undefined, headers);
+      const exec = await request(port, 'POST', '/api/v1/sandbox/agents/agent-sbx-1/exec', { command: 'echo inside' }, headers);
+      const stopped = await request(port, 'POST', '/api/v1/sandbox/agents/agent-sbx-1/stop', undefined, headers);
+      const destroyed = await request(port, 'POST', '/api/v1/sandbox/agents/agent-sbx-1/destroy', undefined, headers);
+
+      expect(created.status).toBe(201);
+      expect(started.body.status).toBe('started');
+      expect(exec.body.output).toBe('ran');
+      expect(stopped.body.status).toBe('stopped');
+      expect(destroyed.body.status).toBe('destroyed');
+      expect(calls.map((call) => call.split(' ').slice(0, 2).join(' '))).toEqual([
+        'POST /v1/sandbox/agents',
+        'POST /v1/sandbox/agents/agent-sbx-1/start',
+        'POST /v1/sandbox/agents/agent-sbx-1/exec',
+        'POST /v1/sandbox/agents/agent-sbx-1/stop',
+        'POST /v1/sandbox/agents/agent-sbx-1/destroy',
+      ]);
+      const audit = readFileSync(join(state.auditDir, 'gateway-audit.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(audit.map((event) => event.action)).toEqual([
+        'sandbox.create',
+        'sandbox.start',
+        'sandbox.exec',
+        'sandbox.stop',
+        'sandbox.destroy',
+      ]);
+    } finally {
+      sandboxApi.close();
+    }
   });
 });

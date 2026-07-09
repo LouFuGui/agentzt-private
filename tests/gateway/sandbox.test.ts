@@ -86,7 +86,32 @@ async function makeDockerApi(): Promise<{
       res.end(JSON.stringify({ Id: 'container-1' }));
       return;
     }
+    if (req.method === 'GET' && req.url === '/v1.41/_ping') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('OK');
+      return;
+    }
     if (req.method === 'POST' && req.url === '/v1.41/containers/container-1/start') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1.41/containers/container-1/exec') {
+      res.writeHead(201, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ Id: 'exec-1' }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1.41/exec/exec-1/start') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('exec-output');
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/v1.41/exec/exec-1/json') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ExitCode: 0 }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1.41/containers/container-1/stop') {
       res.writeHead(204);
       res.end();
       return;
@@ -258,6 +283,45 @@ describe('DockerSandboxRuntime', () => {
       }]);
     } finally {
       await httpSandbox.close();
+    }
+  });
+
+  it('supports Docker agent process sandbox lifecycle', async () => {
+    const docker = await makeDockerApi();
+    try {
+      const { DockerSandboxRuntime } = await import('../../src/gateway/docker-sandbox.ts');
+      const runtime = new DockerSandboxRuntime({
+        socketPath: docker.socketPath,
+        defaultImage: 'alpine:test',
+        memoryMb: 64,
+        networkAccess: false,
+      });
+
+      const health = await runtime.health();
+      const created = await runtime.createAgent({ projectId: 'agentzt', agentId: 'agent-01' });
+      const started = await runtime.startAgent(created.sandboxId);
+      const exec = await runtime.execAgent(created.sandboxId, { mode: 'command', command: 'echo in-agent' });
+      const stopped = await runtime.stopAgent(created.sandboxId);
+      const destroyed = await runtime.destroyAgent(created.sandboxId);
+
+      expect(health).toEqual({ runtime: 'docker', healthy: true });
+      expect(created).toMatchObject({ runtime: 'docker', status: 'created', image: 'alpine:test' });
+      expect(started).toMatchObject({ sandboxId: created.sandboxId, status: 'started' });
+      expect(exec).toMatchObject({ sandboxId: created.sandboxId, exitCode: 0, output: 'exec-output' });
+      expect(stopped.status).toBe('stopped');
+      expect(destroyed.status).toBe('destroyed');
+      expect(docker.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+        'GET /v1.41/_ping',
+        'POST /v1.41/containers/create',
+        'POST /v1.41/containers/container-1/start',
+        'POST /v1.41/containers/container-1/exec',
+        'POST /v1.41/exec/exec-1/start',
+        'GET /v1.41/exec/exec-1/json',
+        'POST /v1.41/containers/container-1/stop',
+        'DELETE /v1.41/containers/container-1?force=true&v=true',
+      ]);
+    } finally {
+      await docker.close();
     }
   });
 });

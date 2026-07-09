@@ -43,6 +43,9 @@ import { TokenService } from './token-service.ts';
 import { RateLimiter } from './rate-limiter.ts';
 import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
+import { createSandboxRuntime } from './sandbox-runtime.ts';
+import type { SandboxRuntime } from './sandbox-runtime.ts';
+import type { SandboxExecuteRequest } from './docker-sandbox.ts';
 import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
 import { OpaClient, resolveOpaConfig } from './opa-client.ts';
@@ -77,6 +80,82 @@ function parseRiskLevel(value: unknown): RiskLevel | undefined {
   return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
     ? value as RiskLevel
     : undefined;
+}
+
+type SandboxValidationFinding = {
+  stage: 'input' | 'output';
+  kind: 'bash' | 'python' | 'javascript';
+  exitCode: number;
+  output: string;
+};
+
+function extractSandboxValidationRequests(text: string): Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> {
+  const findings: Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> = [];
+  const fence = /```(bash|sh|shell|python|py|javascript|js)\s*\n([\s\S]*?)```/gi;
+  for (const match of text.matchAll(fence)) {
+    const language = (match[1] ?? '').toLowerCase();
+    const kind = language === 'python' || language === 'py'
+      ? 'python'
+      : language === 'javascript' || language === 'js'
+        ? 'javascript'
+        : 'bash';
+    findings.push({ kind, code: match[2] ?? '' });
+  }
+  if (findings.length === 0 && /\b(rm\s+-rf|curl\s+|wget\s+|chmod\s+|ssh\s+|scp\s+)/i.test(text)) {
+    findings.push({ kind: 'bash', code: text });
+  }
+  return findings.slice(0, 3);
+}
+
+function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
+  const marker = `AGENTZT_${newId('eof').replace(/[^A-Za-z0-9_]/g, '_')}`;
+  const file = kind === 'python' ? '/tmp/agentzt-validate.py'
+    : kind === 'javascript' ? '/tmp/agentzt-validate.js'
+      : '/tmp/agentzt-validate.sh';
+  const tool = kind === 'python' ? `python3 -m py_compile ${file}`
+    : kind === 'javascript' ? `node --check ${file}`
+      : `sh -n ${file}`;
+  return {
+    mode: 'command',
+    command: `cat > ${file} <<'${marker}'\n${code}\n${marker}\n${tool}`,
+  };
+}
+
+async function runSandboxValidation(
+  runtime: SandboxRuntime | undefined,
+  cfg: GatewayConfig,
+  stage: 'input' | 'output',
+  text: string,
+): Promise<{ allow: boolean; findings: SandboxValidationFinding[]; reason?: string }> {
+  if (!runtime || cfg.sandbox?.enabled === false || cfg.sandbox?.modelValidation?.enabled !== true) {
+    return { allow: true, findings: [] };
+  }
+  const requests = extractSandboxValidationRequests(text);
+  if (requests.length === 0) return { allow: true, findings: [] };
+  const validation = cfg.sandbox.modelValidation;
+  const findings: SandboxValidationFinding[] = [];
+  for (const request of requests) {
+    const result = await runtime.execute({
+      ...validationCommand(request.kind, request.code),
+      timeoutMs: validation.timeoutMs ?? 5000,
+      memoryMb: validation.memoryMb ?? 64,
+      networkAccess: validation.networkAccess ?? false,
+    });
+    findings.push({
+      stage,
+      kind: request.kind,
+      exitCode: result.exitCode,
+      output: result.output,
+    });
+    if (result.exitCode !== 0 || result.timedOut) {
+      return {
+        allow: false,
+        findings,
+        reason: `${stage} sandbox validation failed for ${request.kind}`,
+      };
+    }
+  }
+  return { allow: true, findings };
 }
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
@@ -136,6 +215,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   const signozConfig = resolveSignozConfig(cfg.signoz);
   const telemetry = signozConfig ? new SigNozTelemetry(signozConfig, log) : null;
   const falco = createFalcoMonitor(cfg.falco);
+  const modelSandboxRuntime = cfg.sandbox?.enabled !== false && cfg.sandbox?.modelValidation?.enabled === true
+    ? createSandboxRuntime(cfg.sandbox)
+    : undefined;
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
@@ -145,6 +227,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (signozConfig) log.info(`SigNoz telemetry: ON (endpoint=${signozConfig.endpoint}, service=${signozConfig.serviceName})`);
   if (falco) log.info(`Falco runtime policy: ON (webhook=${falco.config.webhookPath}, minimum=${falco.config.minimumPriority})`);
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
+  if (modelSandboxRuntime) log.info(`model sandbox validation: ON (runtime=${modelSandboxRuntime.name})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   // User management API - reuses the gateway's own signing key for session tokens.
@@ -820,6 +903,17 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         return sendError(res, 403, 'guardrail_blocked', reason);
       }
     }
+    const inputSandboxValidation = await runSandboxValidation(modelSandboxRuntime, cfg, 'input', messages.map((m) => m.content).join('\n'));
+    if (!inputSandboxValidation.allow) {
+      const reason = inputSandboxValidation.reason ?? 'input sandbox validation failed';
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'sandbox.validate', resource: model, decision: 'deny', reason,
+        meta: { stage: 'input', findings: inputSandboxValidation.findings },
+      });
+      log.deny(`sandbox.validate ${claims.sub} -> ${model}: ${reason}`);
+      return sendError(res, 403, 'sandbox_validation_failed', reason);
+    }
 
     // --- ABAC: context-aware authorization (operating hours + risk-adaptive) --
     const riskLevelForAbac = inputVerdict?.riskLevel as RiskLevel | undefined;
@@ -868,6 +962,12 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         outRedactions = r.count;
       }
     }
+    const outputSandboxValidation = result.status === 200
+      ? await runSandboxValidation(modelSandboxRuntime, cfg, 'output', extractText(result.body))
+      : { allow: true, findings: [] };
+    if (!outputSandboxValidation.allow) {
+      replaceText(result.body, '[response withheld by sandbox validation]');
+    }
 
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
@@ -882,6 +982,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         guardrailProvider: guard.name,
         inputVerdict,
         outputVerdict,
+        inputSandboxValidation: inputSandboxValidation.findings,
+        outputSandboxValidation: outputSandboxValidation.findings,
         outputRedactions: outRedactions,
         opa: opaClient ? { reason: opaDecision.reason } : undefined,
       },

@@ -55,8 +55,36 @@ export type SandboxExecuteResult = {
   };
 };
 
+export type SandboxHealth = {
+  runtime: string;
+  healthy: boolean;
+  reason?: string;
+};
+
+export type SandboxAgentCreateRequest = {
+  image?: string;
+  command?: string;
+  timeoutMs?: number;
+  memoryMb?: number;
+  networkAccess?: boolean;
+  env?: Record<string, string>;
+  mounts?: Array<{ source: string; target: string; readonly?: boolean }>;
+  projectId?: string;
+  agentId?: string;
+};
+
+export type SandboxAgentLifecycleResult = {
+  sandboxId: string;
+  runtime: string;
+  status: 'created' | 'started' | 'stopped' | 'destroyed';
+  image?: string;
+  command?: string[];
+};
+
 type DockerCreateResponse = { Id?: string };
 type DockerWaitResponse = { StatusCode?: number; Error?: { Message?: string } };
+type DockerExecCreateResponse = { Id?: string };
+type DockerExecInspectResponse = { ExitCode?: number | null };
 
 export class DockerApiError extends Error {
   readonly statusCode: number;
@@ -128,6 +156,7 @@ export class DockerSandboxRuntime {
   readonly name = 'docker';
 
   private client: DockerApiClient;
+  private agents = new Map<string, string>();
   private config: Required<Omit<DockerSandboxConfig, 'images'>> & {
     images: Record<SandboxCodeLanguage, string>;
   };
@@ -149,6 +178,15 @@ export class DockerSandboxRuntime {
       networkAccess: config.networkAccess ?? false,
     };
     this.client = client ?? new DockerApiClient(this.config);
+  }
+
+  async health(): Promise<SandboxHealth> {
+    try {
+      await this.client.request<string>('GET', '/_ping', undefined, 5000);
+      return { runtime: this.name, healthy: true };
+    } catch (err) {
+      return { runtime: this.name, healthy: false, reason: (err as Error).message };
+    }
   }
 
   async execute(input: SandboxExecuteRequest): Promise<SandboxExecuteResult> {
@@ -234,6 +272,101 @@ export class DockerSandboxRuntime {
 
   private commandFor(input: SandboxExecuteRequest): string[] {
     return dockerSandboxCommandFor(input);
+  }
+
+  async createAgent(input: SandboxAgentCreateRequest = {}): Promise<SandboxAgentLifecycleResult> {
+    const sandboxId = newId('agent-sbx');
+    const timeoutMs = input.timeoutMs ?? this.config.timeoutMs;
+    const memoryLimitMb = Math.min(input.memoryMb ?? this.config.memoryMb, this.config.maxMemoryMb);
+    const networkAccess = input.networkAccess ?? this.config.networkAccess;
+    const image = input.image ?? this.config.defaultImage;
+    const cmd = input.command ? ['sh', '-c', input.command] : ['sh', '-c', 'sleep infinity'];
+    const env = Object.entries(input.env ?? {}).map(([key, value]) => `${key}=${value}`);
+    const binds = (input.mounts ?? []).map((mount) =>
+      `${mount.source}:${mount.target}${mount.readonly ? ':ro' : ''}`);
+    const created = await this.client.request<DockerCreateResponse>('POST', '/containers/create', {
+      Image: image,
+      Cmd: cmd,
+      Tty: false,
+      Env: env.length ? env : undefined,
+      Labels: {
+        'agentzt.sandbox_id': sandboxId,
+        'agentzt.runtime': 'docker',
+        'agentzt.sandbox_type': 'agent-process',
+        ...(input.agentId ? { 'agentzt.agent_id': input.agentId } : {}),
+        ...(input.projectId ? { 'agentzt.project_id': input.projectId } : {}),
+      },
+      HostConfig: {
+        AutoRemove: false,
+        NetworkMode: networkAccess ? 'bridge' : 'none',
+        Memory: memoryLimitMb * 1024 * 1024,
+        Binds: binds.length ? binds : undefined,
+      },
+    }, timeoutMs);
+    if (!created?.Id) throw new Error('Docker create response missing container id');
+    this.agents.set(sandboxId, created.Id);
+    return { sandboxId, runtime: this.name, status: 'created', image, command: cmd };
+  }
+
+  async startAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    const containerId = this.containerFor(sandboxId);
+    await this.client.request('POST', `/containers/${containerId}/start`, undefined, 10000);
+    return { sandboxId, runtime: this.name, status: 'started' };
+  }
+
+  async execAgent(sandboxId: string, input: SandboxExecuteRequest): Promise<SandboxExecuteResult> {
+    const start = Date.now();
+    const containerId = this.containerFor(sandboxId);
+    const timeoutMs = Math.min(input.timeoutMs ?? this.config.timeoutMs, this.config.maxTimeoutMs);
+    const memoryLimitMb = Math.min(input.memoryMb ?? this.config.memoryMb, this.config.maxMemoryMb);
+    const cmd = this.commandFor(input);
+    const created = await this.client.request<DockerExecCreateResponse>('POST', `/containers/${containerId}/exec`, {
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: false,
+      Cmd: cmd,
+    }, 10000);
+    if (!created?.Id) throw new Error('Docker exec create response missing exec id');
+    const output = await this.client.request<string>('POST', `/exec/${created.Id}/start`, {
+      Detach: false,
+      Tty: false,
+    }, timeoutMs);
+    const inspect = await this.client.request<DockerExecInspectResponse>('GET', `/exec/${created.Id}/json`, undefined, 10000);
+    return {
+      sandboxId,
+      runtime: this.name,
+      mode: input.mode,
+      language: input.mode === 'code' ? input.language : undefined,
+      image: 'agent-process',
+      command: cmd,
+      exitCode: inspect?.ExitCode ?? 0,
+      output: String(output ?? ''),
+      timedOut: false,
+      metrics: {
+        executionTime: Date.now() - start,
+        memoryLimitMb,
+        networkAccess: input.networkAccess ?? this.config.networkAccess,
+      },
+    };
+  }
+
+  async stopAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    const containerId = this.containerFor(sandboxId);
+    await this.client.request('POST', `/containers/${containerId}/stop`, undefined, 10000);
+    return { sandboxId, runtime: this.name, status: 'stopped' };
+  }
+
+  async destroyAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    const containerId = this.containerFor(sandboxId);
+    await this.remove(containerId);
+    this.agents.delete(sandboxId);
+    return { sandboxId, runtime: this.name, status: 'destroyed' };
+  }
+
+  private containerFor(sandboxId: string): string {
+    const containerId = this.agents.get(sandboxId);
+    if (!containerId) throw new Error(`agent sandbox "${sandboxId}" not found`);
+    return containerId;
   }
 
   private async kill(containerId: string): Promise<void> {

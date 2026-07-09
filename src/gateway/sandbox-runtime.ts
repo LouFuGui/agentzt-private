@@ -2,21 +2,32 @@ import { DockerSandboxRuntime } from './docker-sandbox.ts';
 import type { GatewayConfig } from '../shared/types.ts';
 import type {
   DockerSandboxConfig,
+  SandboxAgentCreateRequest,
+  SandboxAgentLifecycleResult,
   SandboxExecuteRequest,
   SandboxExecuteResult,
+  SandboxHealth,
 } from './docker-sandbox.ts';
 
 export type SandboxRuntimeName = 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
 
 export type SandboxRuntime = {
   readonly name: SandboxRuntimeName;
+  health(): Promise<SandboxHealth>;
   execute(input: SandboxExecuteRequest): Promise<SandboxExecuteResult>;
+  createAgent?(input: SandboxAgentCreateRequest): Promise<SandboxAgentLifecycleResult>;
+  startAgent?(sandboxId: string): Promise<SandboxAgentLifecycleResult>;
+  execAgent?(sandboxId: string, input: SandboxExecuteRequest): Promise<SandboxExecuteResult>;
+  stopAgent?(sandboxId: string): Promise<SandboxAgentLifecycleResult>;
+  destroyAgent?(sandboxId: string): Promise<SandboxAgentLifecycleResult>;
 };
 
 export type HttpSandboxRuntimeConfig = {
   name: Exclude<SandboxRuntimeName, 'docker'>;
   baseUrl: string;
   executePath?: string;
+  healthPath?: string;
+  agentPath?: string;
   timeoutMs?: number;
   defaultImage?: string;
 };
@@ -37,6 +48,8 @@ export class HttpSandboxRuntime implements SandboxRuntime {
   readonly name: Exclude<SandboxRuntimeName, 'docker'>;
   private baseUrl: string;
   private executePath: string;
+  private healthPath: string;
+  private agentPath: string;
   private timeoutMs: number;
   private defaultImage: string;
 
@@ -44,8 +57,23 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     this.name = config.name;
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.executePath = config.executePath ?? '/v1/sandbox/execute';
+    this.healthPath = config.healthPath ?? '/v1/sandbox/health';
+    this.agentPath = config.agentPath ?? '/v1/sandbox/agents';
     this.timeoutMs = config.timeoutMs ?? 30000;
     this.defaultImage = config.defaultImage ?? this.name;
+  }
+
+  async health(): Promise<SandboxHealth> {
+    try {
+      const res = await fetch(`${this.baseUrl}${this.healthPath}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, 5000)),
+      });
+      if (!res.ok) return { runtime: this.name, healthy: false, reason: `HTTP ${res.status}` };
+      return { runtime: this.name, healthy: true };
+    } catch (err) {
+      return { runtime: this.name, healthy: false, reason: (err as Error).message };
+    }
   }
 
   async execute(input: SandboxExecuteRequest): Promise<SandboxExecuteResult> {
@@ -72,6 +100,84 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       timedOut: body.timedOut ?? false,
       metrics: {
         executionTime: body.metrics?.executionTime ?? Date.now() - start,
+        memoryLimitMb: body.metrics?.memoryLimitMb ?? input.memoryMb ?? 0,
+        networkAccess: body.metrics?.networkAccess ?? input.networkAccess ?? false,
+      },
+    };
+  }
+
+  async createAgent(input: SandboxAgentCreateRequest): Promise<SandboxAgentLifecycleResult> {
+    const body = await this.postJson<Partial<SandboxAgentLifecycleResult>>(this.agentPath, input);
+    return {
+      sandboxId: body.sandboxId ?? `remote-agent-${Date.now()}`,
+      runtime: body.runtime ?? this.name,
+      status: body.status ?? 'created',
+      image: body.image,
+      command: body.command,
+    };
+  }
+
+  async startAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    return await this.lifecyclePost(sandboxId, 'start', 'started');
+  }
+
+  async execAgent(sandboxId: string, input: SandboxExecuteRequest): Promise<SandboxExecuteResult> {
+    const body = await this.postJson<HttpSandboxResponse>(`${this.agentPath}/${encodeURIComponent(sandboxId)}/exec`, input);
+    return this.responseToExecuteResult(body, input, sandboxId);
+  }
+
+  async stopAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    return await this.lifecyclePost(sandboxId, 'stop', 'stopped');
+  }
+
+  async destroyAgent(sandboxId: string): Promise<SandboxAgentLifecycleResult> {
+    return await this.lifecyclePost(sandboxId, 'destroy', 'destroyed');
+  }
+
+  private async lifecyclePost(
+    sandboxId: string,
+    operation: string,
+    status: SandboxAgentLifecycleResult['status'],
+  ): Promise<SandboxAgentLifecycleResult> {
+    const body = await this.postJson<Partial<SandboxAgentLifecycleResult>>(
+      `${this.agentPath}/${encodeURIComponent(sandboxId)}/${operation}`,
+      {},
+    );
+    return { sandboxId: body.sandboxId ?? sandboxId, runtime: body.runtime ?? this.name, status: body.status ?? status };
+  }
+
+  private async postJson<T>(path: string, input: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    const text = await res.text();
+    const body = text ? JSON.parse(text) as T : {} as T;
+    if (!res.ok) throw new Error(`HTTP sandbox ${path} failed: ${res.status}`);
+    return body;
+  }
+
+  private responseToExecuteResult(
+    body: HttpSandboxResponse,
+    input: SandboxExecuteRequest,
+    fallbackSandboxId?: string,
+  ): SandboxExecuteResult {
+    const exitCode = resolveExitCode(true, body);
+    const output = resolveOutput(body);
+    return {
+      sandboxId: body.sandboxId ?? body.sandbox_id ?? fallbackSandboxId ?? `remote-${Date.now()}`,
+      runtime: this.name,
+      mode: input.mode,
+      language: input.mode === 'code' ? input.language : undefined,
+      image: body.image ?? this.defaultImage,
+      command: body.command ?? [],
+      exitCode,
+      output: String(output ?? ''),
+      timedOut: body.timedOut ?? false,
+      metrics: {
+        executionTime: body.metrics?.executionTime ?? 0,
         memoryLimitMb: body.metrics?.memoryLimitMb ?? input.memoryMb ?? 0,
         networkAccess: body.metrics?.networkAccess ?? input.networkAccess ?? false,
       },
@@ -111,6 +217,8 @@ export function createSandboxRuntime(cfg: GatewayConfig['sandbox']): SandboxRunt
     name: runtime,
     baseUrl: cfg?.baseUrl ?? 'http://localhost:8080',
     executePath: cfg?.executePath,
+    healthPath: cfg?.healthPath,
+    agentPath: cfg?.agentPath,
     timeoutMs: cfg?.timeoutMs,
     defaultImage: cfg?.defaultImage,
   });

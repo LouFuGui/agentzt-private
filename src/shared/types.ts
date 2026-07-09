@@ -193,6 +193,17 @@ export type SandboxPolicyConfig = {
   allowNetworkAccess?: boolean;
 };
 
+export type SandboxRuntimeProviderConfig = {
+  name: string;
+  type: 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+  baseUrl?: string;
+  healthPath?: string;
+  executePath?: string;
+  enabled?: boolean;
+  capacity?: number;
+  defaultImage?: string;
+};
+
 export type FalcoPriority =
   | 'emergency'
   | 'alert'
@@ -252,7 +263,9 @@ export type GatewayConfig = {
     baseUrl: string;
     autoStart: boolean;
     runtime?: 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+    healthPath?: string;
     executePath?: string;
+    agentPath?: string;
     dockerSocketPath?: string;
     dockerApiVersion?: string;
     defaultImage?: string;
@@ -264,6 +277,14 @@ export type GatewayConfig = {
     networkAccess?: boolean;
     filesystemAccess?: string[];
     policy?: SandboxPolicyConfig;
+    runtimes?: SandboxRuntimeProviderConfig[];
+    modelValidation?: {
+      enabled?: boolean;
+      highRiskOnly?: boolean;
+      timeoutMs?: number;
+      memoryMb?: number;
+      networkAccess?: boolean;
+    };
   };
 };
 
@@ -331,7 +352,13 @@ export type AuditAction =
   | 'direct.call'
   | 'quota.exceeded'
   | 'falco.event'
-  | 'falco.block';
+  | 'falco.block'
+  | 'sandbox.create'
+  | 'sandbox.start'
+  | 'sandbox.exec'
+  | 'sandbox.stop'
+  | 'sandbox.destroy'
+  | 'sandbox.validate';
 
 export type AuditEvent = {
   ts: string;
