@@ -160,6 +160,13 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+function sandboxProjectId(body: Record<string, unknown>): string | undefined | null {
+  const value = body['projectId'];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return value.trim();
+}
+
 function isGovernance(value: unknown): value is GovernanceBoundary {
   if (value === undefined) return true;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -453,10 +460,12 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
   if (!auth) return true;
 
   const body = await readJson<Record<string, unknown>>(req);
-  if (body['projectId'] !== undefined && (typeof body['projectId'] !== 'string' || body['projectId'].trim() === '')) {
+  const projectId = sandboxProjectId(body);
+  if (projectId === null) {
     sendError(res, 400, 'invalid_request', 'projectId must be a non-empty string when provided');
     return true;
   }
+  const governance = projectId ? { projectId } : undefined;
   const args = isObject(body['arguments']) ? body['arguments'] as Record<string, unknown> : body;
   const { getTool } = await import('../gateway/tool-registry.ts');
   const tool = getTool('sandbox.execute');
@@ -486,7 +495,7 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
       decision: 'deny',
       reason: `parameter validation failed: ${validationError}`,
       userId: auth.userId,
-      governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+      governance,
       meta: { management: true },
     });
     sendError(res, 400, 'invalid_request', validationError);
@@ -498,7 +507,7 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
     agentId: `management:${auth.userId}`,
     role: auth.role,
     requestId,
-    governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+    governance,
   });
   const { auditMeta } = result;
   const sandboxMeta = auditMeta?.['sandbox'];
@@ -513,7 +522,7 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
     reason: result.error ?? 'management sandbox execute succeeded',
     latencyMs: Date.now() - started,
     userId: auth.userId,
-    governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
+    governance,
     meta: {
       ok: result.ok,
       authVia: 'management',

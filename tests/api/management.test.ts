@@ -74,6 +74,7 @@ vi.mock('../../src/gateway/tool-registry.ts', () => ({
         if (mode !== 'command' && mode !== 'code') return 'parameter "mode" must be "command" or "code"';
         if (mode === 'command') {
           if (typeof args['command'] !== 'string') return 'parameter "command" must be a string';
+          if (args['command'].trim() === '') return 'parameter "command" must include an executable name';
           if (args['code'] !== undefined) return 'command execution must not include "code"';
           return null;
         }
@@ -356,5 +357,17 @@ describe('enterprise management API', () => {
         authVia: 'management',
       },
     });
+  });
+
+  it('rejects blank sandbox debug commands before execution', async () => {
+    const adminHeaders = { 'x-user-id': 'admin-01', 'x-user-role': 'admin' };
+
+    const response = await request(port, 'POST', '/api/v1/sandbox/execute', {
+      command: '   ',
+    }, adminHeaders);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toBe('parameter "command" must include an executable name');
+    expect(state.sandboxRuns).toHaveLength(0);
   });
 });
