@@ -69,10 +69,21 @@ vi.mock('../../src/gateway/tool-registry.ts', () => ({
     return {
       name: 'sandbox.execute',
       description: 'test sandbox tool',
-      validate: (args: Record<string, unknown>) =>
-        typeof args['command'] === 'string' || typeof args['code'] === 'string'
-          ? null
-          : 'command or code is required',
+      validate: (args: Record<string, unknown>) => {
+        const mode = args['mode'] ?? (args['command'] !== undefined ? 'command' : 'code');
+        if (mode !== 'command' && mode !== 'code') return 'parameter "mode" must be "command" or "code"';
+        if (mode === 'command') {
+          if (typeof args['command'] !== 'string') return 'parameter "command" must be a string';
+          if (args['code'] !== undefined) return 'command execution must not include "code"';
+          return null;
+        }
+        if (typeof args['code'] !== 'string') return 'parameter "code" must be a string';
+        if (args['language'] !== 'python' && args['language'] !== 'javascript' && args['language'] !== 'bash') {
+          return 'parameter "language" must be one of: python, javascript, bash';
+        }
+        if (args['command'] !== undefined) return 'code execution must not include "command"';
+        return null;
+      },
       run: (args: Record<string, unknown>, ctx: { agentId: string; role: string; requestId: string }) => {
         state.sandboxRuns.push({ args, ctx });
         return { ok: true, output: { sandboxId: 'sbx-test', output: 'ok' } };

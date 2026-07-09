@@ -3,6 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
 const log = makeLogger('docker-sandbox');
+// 124 matches timeout(1), giving callers a familiar way to classify timeouts.
 const SANDBOX_TIMEOUT_EXIT_CODE = 124;
 
 export type SandboxExecuteMode = 'command' | 'code';
@@ -81,10 +82,10 @@ export class DockerApiClient {
     path: string,
     body?: unknown,
     timeoutMs = 30000,
-  ): Promise<T> {
+  ): Promise<T | undefined> {
     const versionedPath = `/${this.apiVersion}${path}`;
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    return await new Promise<T>((resolve, reject) => {
+    return await new Promise<T | undefined>((resolve, reject) => {
       const req = request({
         socketPath: this.socketPath,
         path: versionedPath,
@@ -104,7 +105,7 @@ export class DockerApiClient {
             return;
           }
           if (!text) {
-            resolve({} as T);
+            resolve(undefined);
             return;
           }
           const contentType = String(res.headers['content-type'] ?? '');
@@ -175,12 +176,12 @@ export class DockerSandboxRuntime {
           Memory: memoryLimitMb * 1024 * 1024,
         },
       }, 10000);
-      if (!created.Id) throw new Error('Docker create response missing container id');
+      if (!created?.Id) throw new Error('Docker create response missing container id');
       containerId = created.Id;
 
       await this.client.request('POST', `/containers/${containerId}/start`, undefined, 10000);
 
-      let wait: DockerWaitResponse;
+      let wait: DockerWaitResponse | undefined;
       try {
         wait = await this.client.request<DockerWaitResponse>(
           'POST',
@@ -202,7 +203,7 @@ export class DockerSandboxRuntime {
         undefined,
         10000,
       );
-      if (wait.Error?.Message) log.warn(`sandbox ${sandboxId} wait error: ${wait.Error.Message}`);
+      if (wait?.Error?.Message) log.warn(`sandbox ${sandboxId} wait error: ${wait.Error.Message}`);
 
       return {
         sandboxId,
@@ -210,7 +211,7 @@ export class DockerSandboxRuntime {
         language: input.mode === 'code' ? input.language : undefined,
         image,
         command: cmd,
-        exitCode: wait.StatusCode ?? 1,
+        exitCode: wait?.StatusCode ?? 1,
         output: String(output ?? ''),
         timedOut,
         metrics: {
