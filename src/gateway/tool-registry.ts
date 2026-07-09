@@ -89,7 +89,7 @@ function optionalPositiveInteger(args: Record<string, unknown>, key: string, max
 function extractCommandName(command: string): string {
   const trimmed = command.trim();
   if (!trimmed) return '';
-  return trimmed.split(/\s+/, 1)[0] as string;
+  return /^(\S+)/.exec(trimmed)?.[1] ?? '';
 }
 
 function validateSandboxExecute(a: Record<string, unknown>): string | null {

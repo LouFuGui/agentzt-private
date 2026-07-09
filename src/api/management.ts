@@ -40,6 +40,13 @@ const ROLE_RANK: Record<UserRole, number> = {
 };
 
 const AGENT_STATUSES = ['active', 'disabled', 'revoked'] as const;
+const SANDBOX_LIFECYCLE_ACTIONS = {
+  create: 'sandbox.create',
+  start: 'sandbox.start',
+  exec: 'sandbox.exec',
+  stop: 'sandbox.stop',
+  destroy: 'sandbox.destroy',
+} as const;
 let auditLogger: AuditLogger | undefined;
 let auditLoggerFile: string | undefined;
 let sandboxRuntime: SandboxRuntime | undefined;
@@ -704,11 +711,9 @@ function recordSandboxLifecycleAudit(
 }
 
 function sandboxLifecycleAction(operation: string): 'sandbox.create' | 'sandbox.start' | 'sandbox.exec' | 'sandbox.stop' | 'sandbox.destroy' {
-  if (operation === 'create') return 'sandbox.create';
-  if (operation === 'start') return 'sandbox.start';
-  if (operation === 'exec') return 'sandbox.exec';
-  if (operation === 'stop') return 'sandbox.stop';
-  if (operation === 'destroy') return 'sandbox.destroy';
+  if (operation in SANDBOX_LIFECYCLE_ACTIONS) {
+    return SANDBOX_LIFECYCLE_ACTIONS[operation as keyof typeof SANDBOX_LIFECYCLE_ACTIONS];
+  }
   throw new Error(`unknown sandbox lifecycle operation "${operation}"`);
 }
 

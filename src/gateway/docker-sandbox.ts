@@ -5,6 +5,8 @@ import { newId } from '../shared/crypto.ts';
 const log = makeLogger('docker-sandbox');
 // Exit code 124 follows timeout(1), so callers can classify timeouts apart from generic failures.
 const SANDBOX_TIMEOUT_EXIT_CODE_GNU_COMPAT = 124;
+const ABORT_ERROR = 'AbortError';
+const TIMEOUT_ERROR = 'TimeoutError';
 
 export type SandboxExecuteMode = 'command' | 'code';
 export type SandboxCodeLanguage = 'python' | 'javascript' | 'bash';
@@ -234,7 +236,7 @@ export class DockerSandboxRuntime {
         );
       } catch (err) {
         const errorName = (err as Error).name;
-        if (errorName !== 'AbortError' && errorName !== 'TimeoutError') throw err;
+        if (errorName !== ABORT_ERROR && errorName !== TIMEOUT_ERROR) throw err;
         timedOut = true;
         await this.kill(containerId);
         // Match the conventional timeout(1) exit code so callers can classify timeouts.

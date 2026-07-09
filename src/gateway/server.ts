@@ -76,8 +76,8 @@ import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '
 import type { AuditEvent } from '../shared/types.ts';
 
 const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
-const SANDBOX_VALIDATION_MAX_SNIPPETS = 3;
-const HEREDOC_MARKER_COLLISION_MAX_RETRIES = 10;
+const MAX_VALIDATION_SNIPPETS = 3;
+const MAX_HEREDOC_RETRIES = 10;
 const DEFAULT_SANDBOX_HIGH_RISK_PATTERNS = ['\\brm\\s+-rf', '\\bcurl\\s+', '\\bwget\\s+', '\\bchmod\\s+', '\\bssh\\s+', '\\bscp\\s+'];
 const highRiskPatternCache = new Map<string, RegExp[]>();
 
@@ -114,22 +114,27 @@ function extractSandboxValidationRequests(
     findings.push({ kind: 'bash', code: text });
   }
 
-  function compiledHighRiskPatterns(patterns: string[]): RegExp[] {
-    const key = patterns.join('\n');
-    const cached = highRiskPatternCache.get(key);
-    if (cached) return cached;
-    const compiled = patterns.map((pattern) => new RegExp(pattern, 'i'));
-    highRiskPatternCache.set(key, compiled);
-    return compiled;
-  }
-  return findings.slice(0, SANDBOX_VALIDATION_MAX_SNIPPETS);
+  return findings.slice(0, MAX_VALIDATION_SNIPPETS);
+}
+
+function compiledHighRiskPatterns(patterns: string[]): RegExp[] {
+  const key = patterns.join('\n');
+  const cached = highRiskPatternCache.get(key);
+  if (cached) return cached;
+  const compiled = patterns.map((pattern) => new RegExp(pattern, 'i'));
+  highRiskPatternCache.set(key, compiled);
+  return compiled;
+}
+
+function generateHeredocMarker(): string {
+  return `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
 }
 
 function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
-  let heredocMarker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  let heredocMarker = generateHeredocMarker();
   for (let attempts = 0; code.includes(heredocMarker); attempts++) {
-    if (attempts >= HEREDOC_MARKER_COLLISION_MAX_RETRIES) throw new Error('unable to create unique sandbox validation marker');
-    heredocMarker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+    if (attempts >= MAX_HEREDOC_RETRIES) throw new Error('unable to create unique sandbox validation marker');
+    heredocMarker = generateHeredocMarker();
   }
   const file = kind === 'python' ? '/tmp/agentzt-validate.py'
     : kind === 'javascript' ? '/tmp/agentzt-validate.js'
@@ -988,6 +993,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       ? await runSandboxValidation(modelSandboxRuntime, cfg, 'output', extractText(result.body))
       : { allow: true, findings: [] };
     if (!outputSandboxValidation.allow) {
+      // Preserve response shape while withholding code/commands that failed sandbox validation.
       replaceText(result.body, '[response withheld by sandbox validation]');
     }
 
