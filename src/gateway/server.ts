@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { TLSSocket } from 'node:tls';
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import {
@@ -75,6 +76,7 @@ import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '
 import type { AuditEvent } from '../shared/types.ts';
 
 const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
+const SANDBOX_VALIDATION_MAX_SNIPPETS = 3;
 
 function parseRiskLevel(value: unknown): RiskLevel | undefined {
   return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
@@ -104,11 +106,12 @@ function extractSandboxValidationRequests(text: string): Array<{ kind: 'bash' | 
   if (findings.length === 0 && /\b(rm\s+-rf|curl\s+|wget\s+|chmod\s+|ssh\s+|scp\s+)/i.test(text)) {
     findings.push({ kind: 'bash', code: text });
   }
-  return findings.slice(0, 3);
+  return findings.slice(0, SANDBOX_VALIDATION_MAX_SNIPPETS);
 }
 
 function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
-  const marker = `AGENTZT_${newId('eof').replace(/[^A-Za-z0-9_]/g, '_')}`;
+  let marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  while (code.includes(marker)) marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
   const file = kind === 'python' ? '/tmp/agentzt-validate.py'
     : kind === 'javascript' ? '/tmp/agentzt-validate.js'
       : '/tmp/agentzt-validate.sh';

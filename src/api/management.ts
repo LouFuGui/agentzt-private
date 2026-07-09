@@ -178,18 +178,23 @@ function sandboxProjectId(body: Record<string, unknown>): string | undefined | n
 
 function sandboxRuntimeInstance(): SandboxRuntime {
   const cfg = loadGatewayConfig();
-  const key = JSON.stringify({
-    runtime: cfg.sandbox?.runtime,
-    baseUrl: cfg.sandbox?.baseUrl,
-    dockerSocketPath: cfg.sandbox?.dockerSocketPath,
-    executePath: cfg.sandbox?.executePath,
-    agentPath: cfg.sandbox?.agentPath,
-  });
+  const key = sandboxRuntimeCacheKey(cfg);
   if (!sandboxRuntime || sandboxRuntimeKey !== key) {
     sandboxRuntime = createSandboxRuntime(cfg.sandbox);
     sandboxRuntimeKey = key;
   }
   return sandboxRuntime;
+}
+
+function sandboxRuntimeCacheKey(cfg: ReturnType<typeof loadGatewayConfig>): string {
+  const sandbox = cfg.sandbox;
+  return [
+    sandbox?.runtime ?? 'docker',
+    sandbox?.baseUrl ?? '',
+    sandbox?.dockerSocketPath ?? '',
+    sandbox?.executePath ?? '',
+    sandbox?.agentPath ?? '',
+  ].join('|');
 }
 
 function isGovernance(value: unknown): value is GovernanceBoundary {
@@ -698,11 +703,12 @@ function recordSandboxLifecycleAudit(
 }
 
 function sandboxLifecycleAction(operation: string): 'sandbox.create' | 'sandbox.start' | 'sandbox.exec' | 'sandbox.stop' | 'sandbox.destroy' {
+  if (operation === 'create') return 'sandbox.create';
   if (operation === 'start') return 'sandbox.start';
   if (operation === 'exec') return 'sandbox.exec';
   if (operation === 'stop') return 'sandbox.stop';
   if (operation === 'destroy') return 'sandbox.destroy';
-  return 'sandbox.create';
+  throw new Error(`unknown sandbox lifecycle operation "${operation}"`);
 }
 
 function sandboxAgentCreateRequest(body: Record<string, unknown>): SandboxAgentCreateRequest | string {

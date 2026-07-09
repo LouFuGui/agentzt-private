@@ -10,6 +10,7 @@ import type {
 } from './docker-sandbox.ts';
 
 export type SandboxRuntimeName = 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+const SANDBOX_HEALTH_TIMEOUT_MS = 5000;
 
 export type SandboxRuntime = {
   readonly name: SandboxRuntimeName;
@@ -67,7 +68,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
     try {
       const res = await fetch(`${this.baseUrl}${this.healthPath}`, {
         method: 'GET',
-        signal: AbortSignal.timeout(Math.min(this.timeoutMs, 5000)),
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_TIMEOUT_MS)),
       });
       if (!res.ok) return { runtime: this.name, healthy: false, reason: `HTTP ${res.status}` };
       return { runtime: this.name, healthy: true };

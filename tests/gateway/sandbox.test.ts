@@ -643,10 +643,11 @@ describe('sandbox.execute gateway tool', () => {
         });
 
         expect(modelResp.status).toBe(200);
-        expect(docker.requests.some((r) =>
+        const validationCreate = docker.requests.find((r) =>
           r.method === 'POST'
           && r.url === '/v1.41/containers/create'
-          && JSON.stringify(r.body).includes('sh -n /tmp/agentzt-validate.sh'))).toBe(true);
+          && (r.body as DockerCreateBody).Cmd?.join('\n').includes('/tmp/agentzt-validate.sh'));
+        expect((validationCreate?.body as DockerCreateBody).Cmd.join('\n')).toContain('sh -n /tmp/agentzt-validate.sh');
         const audit = readFileSync(join(root, '.agentzt', 'audit', 'gateway-audit.jsonl'), 'utf8')
           .trim()
           .split('\n')
