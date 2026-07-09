@@ -96,7 +96,9 @@
     "enabled": true,
     "runtime": "docker",
     "baseUrl": "http://localhost:8080",
+    "healthPath": "/v1/sandbox/health",
     "executePath": "/v1/sandbox/execute",
+    "agentPath": "/v1/sandbox/agents",
     "autoStart": true,
     "dockerSocketPath": "/var/run/docker.sock",
     "dockerApiVersion": "v1.41",
@@ -112,6 +114,40 @@
     "maxMemoryMb": 512,
     "networkAccess": false,
     "filesystemAccess": [],
+    "runtimes": [
+      {
+        "name": "local-docker",
+        "type": "docker",
+        "enabled": true,
+        "capacity": 1,
+        "defaultImage": "alpine:3.20"
+      },
+      {
+        "name": "aiosandbox-http",
+        "type": "aiosandbox",
+        "enabled": false,
+        "baseUrl": "http://localhost:8080",
+        "healthPath": "/v1/sandbox/health",
+        "executePath": "/v1/sandbox/execute",
+        "capacity": 10
+      },
+      {
+        "name": "opensandbox-http",
+        "type": "opensandbox",
+        "enabled": false,
+        "baseUrl": "http://localhost:8081",
+        "healthPath": "/v1/sandbox/health",
+        "executePath": "/v1/sandbox/execute",
+        "capacity": 10
+      }
+    ],
+    "modelValidation": {
+      "enabled": false,
+      "highRiskOnly": true,
+      "timeoutMs": 5000,
+      "memoryMb": 64,
+      "networkAccess": false
+    },
     "policy": {
       "allowedCommands": ["echo", "cat", "ls", "pwd"],
       "allowedLanguages": ["python", "javascript", "bash"],

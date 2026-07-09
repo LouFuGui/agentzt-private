@@ -166,3 +166,15 @@
   - 管理 API 调试入口 `/api/v1/sandbox/execute` 现在会将执行结果写入 gateway audit hash chain。
   - 审计记录复用 `tool.call` / `sandbox.execute` 资源维度，并标记 `authVia: management`、管理用户 ID、执行结果与 sandbox audit meta。
   - 补充管理 API 测试，验证管理员调试执行会落审计日志，便于后续控制台调试与 Agent 工具调用在同一审计视图中追踪。
+
+### 智能体沙盒编排继续推进
+
+- 当前状态判断：工具执行沙盒、管理调试入口、Docker/HTTP runtime adapter、命令/语言/project/资源策略与审计已经具备首版闭环；完整企业沙盒编排平台此前尚未全部实现。
+- 本轮继续补齐下一层能力：
+  - `SandboxRuntime` 扩展健康检查与 Agent process sandbox 生命周期 adapter：create/start/exec/stop/destroy。
+  - Docker runtime 增加本地 Agent process sandbox 生命周期实现；HTTP runtime 增加 AIOsandbox/OpenSandbox 风格生命周期路径适配。
+  - 管理 API 新增 `/api/v1/sandbox/runtimes` 健康/registry 调试入口，以及 `/api/v1/sandbox/agents` Agent 沙盒创建、启动、执行、停止、销毁入口。
+  - 审计事件从单次 `tool.call` 扩展到 `sandbox.create`、`sandbox.start`、`sandbox.exec`、`sandbox.stop`、`sandbox.destroy`。
+  - Gateway 模型调用路径新增可选 `sandbox.modelValidation`：在 guardrail 后、upstream 前对输入中的高风险代码/命令做 dry-run/语法验证；模型输出后也可二次验证并在失败时替换响应。
+  - `config/gateway.json` 增加 runtime registry 示例、health/agent 路径与模型沙盒验证默认配置。
+- 当前仍属于“控制面最小编排”而非完整平台：容量调度、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明仍是后续增强方向。
