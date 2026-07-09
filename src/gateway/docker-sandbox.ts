@@ -195,7 +195,9 @@ export class DockerSandboxRuntime {
     const memoryLimitMb = Math.min(input.memoryMb ?? this.config.memoryMb, this.config.maxMemoryMb);
     const networkAccess = input.networkAccess ?? this.config.networkAccess;
     const sandboxId = newId('sbx');
-    const image = input.mode === 'code' ? this.config.images[input.language] : this.config.defaultImage;
+    const image = input.mode === 'code'
+      ? this.config.images[input.language] ?? this.config.defaultImage
+      : this.config.defaultImage;
     const cmd = this.commandFor(input);
     let containerId: string | undefined;
     let timedOut = false;

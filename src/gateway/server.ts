@@ -91,7 +91,10 @@ type SandboxValidationFinding = {
   output: string;
 };
 
-function extractSandboxValidationRequests(text: string): Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> {
+function extractSandboxValidationRequests(
+  text: string,
+  highRiskPatterns: string[] = ['\\brm\\s+-rf', '\\bcurl\\s+', '\\bwget\\s+', '\\bchmod\\s+', '\\bssh\\s+', '\\bscp\\s+'],
+): Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> {
   const findings: Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> = [];
   const fence = /```(bash|sh|shell|python|py|javascript|js)\s*\n([\s\S]*?)```/gi;
   for (const match of text.matchAll(fence)) {
@@ -103,7 +106,7 @@ function extractSandboxValidationRequests(text: string): Array<{ kind: 'bash' | 
         : 'bash';
     findings.push({ kind, code: match[2] ?? '' });
   }
-  if (findings.length === 0 && /\b(rm\s+-rf|curl\s+|wget\s+|chmod\s+|ssh\s+|scp\s+)/i.test(text)) {
+  if (findings.length === 0 && highRiskPatterns.some((pattern) => new RegExp(pattern, 'i').test(text))) {
     findings.push({ kind: 'bash', code: text });
   }
   return findings.slice(0, SANDBOX_VALIDATION_MAX_SNIPPETS);
@@ -111,7 +114,10 @@ function extractSandboxValidationRequests(text: string): Array<{ kind: 'bash' | 
 
 function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
   let marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
-  while (code.includes(marker)) marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  for (let attempts = 0; code.includes(marker); attempts++) {
+    if (attempts >= 10) throw new Error('unable to create unique sandbox validation marker');
+    marker = `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+  }
   const file = kind === 'python' ? '/tmp/agentzt-validate.py'
     : kind === 'javascript' ? '/tmp/agentzt-validate.js'
       : '/tmp/agentzt-validate.sh';
@@ -133,7 +139,7 @@ async function runSandboxValidation(
   if (!runtime || cfg.sandbox?.enabled === false || cfg.sandbox?.modelValidation?.enabled !== true) {
     return { allow: true, findings: [] };
   }
-  const requests = extractSandboxValidationRequests(text);
+  const requests = extractSandboxValidationRequests(text, cfg.sandbox?.modelValidation?.highRiskPatterns);
   if (requests.length === 0) return { allow: true, findings: [] };
   const validation = cfg.sandbox.modelValidation;
   const findings: SandboxValidationFinding[] = [];

@@ -284,6 +284,7 @@ export type GatewayConfig = {
       timeoutMs?: number;
       memoryMb?: number;
       networkAccess?: boolean;
+      highRiskPatterns?: string[];
     };
   };
 };

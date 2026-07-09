@@ -146,7 +146,8 @@
       "highRiskOnly": true,
       "timeoutMs": 5000,
       "memoryMb": 64,
-      "networkAccess": false
+      "networkAccess": false,
+      "highRiskPatterns": ["\\brm\\s+-rf", "\\bcurl\\s+", "\\bwget\\s+", "\\bchmod\\s+", "\\bssh\\s+", "\\bscp\\s+"]
     },
     "policy": {
       "allowedCommands": ["echo", "cat", "ls", "pwd"],

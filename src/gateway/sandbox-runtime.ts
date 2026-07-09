@@ -86,7 +86,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       signal: AbortSignal.timeout(input.timeoutMs ?? this.timeoutMs),
     });
     const text = await res.text();
-    const body = text ? JSON.parse(text) as HttpSandboxResponse : {};
+    const body = parseHttpSandboxJson<HttpSandboxResponse>(text, this.executePath);
     const exitCode = resolveExitCode(res.ok, body);
     const output = resolveOutput(body);
     return {
@@ -155,7 +155,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     const text = await res.text();
-    const body = text ? JSON.parse(text) as T : {} as T;
+    const body = parseHttpSandboxJson<T>(text, path);
     if (!res.ok) throw new Error(`HTTP sandbox ${path} failed: ${res.status}`);
     return body;
   }
@@ -183,6 +183,16 @@ export class HttpSandboxRuntime implements SandboxRuntime {
         networkAccess: body.metrics?.networkAccess ?? input.networkAccess ?? false,
       },
     };
+  }
+
+}
+
+function parseHttpSandboxJson<T>(text: string, path: string): T {
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (err) {
+    throw new Error(`HTTP sandbox ${path} returned invalid JSON: ${(err as Error).message}`);
   }
 }
 
