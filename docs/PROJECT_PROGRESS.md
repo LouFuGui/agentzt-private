@@ -138,3 +138,9 @@
 - 用户确认沙盒安全策略选择“全部都要，但分阶段做”：网络策略、文件系统策略、资源限制、命令/语言白名单与审计都应纳入第二版计划；首个开发闭环建议优先落地资源限制、完整审计与基础网络默认禁用。
 - 用户确认首版 `sandbox.execute` 同时需要两个入口：管理 API 调试入口（例如 `/api/v1/sandbox/execute`）与 Agent 工具调用入口（例如 `/v1/tools/sandbox.execute`）；前者用于管理员/控制台调试，后者用于 Agent 通过 token 正式调用。
 - 用户确认 `sandbox.execute` 权限控制选择“全部都要，分阶段做”：按 role、project、命令/语言与资源额度控制都应纳入第二版计划；首个开发闭环建议先做 role 是否允许 `sandbox.execute` 与资源上限，再扩展命令/语言白名单和 project 级策略。
+
+### 智能体沙盒 MVP 开发启动
+
+- 本轮用户再次强调“工具执行沙盒、Agent 运行沙盒、模型访问前后安全沙盒、企业沙盒编排平台”是主线，其中首要交付仍是最小闭环：只接入现有 Docker 沙盒 runtime，跑通“创建沙盒 → 执行命令/代码 → 返回结果 → 审计”。
+- 首批实现聚焦 Agent 工具入口 `sandbox.execute`：通过 Gateway 既有 `/v1/tools/{name}` 路径进入 RBAC/ABAC/OPA/审计链，工具内部使用 Docker Engine HTTP API 创建一次性容器执行 command/code，默认禁用网络并施加超时与内存上限。
+- 后续仍需补齐管理 API 调试入口、命令/语言白名单、project 级策略、长任务/会话复用、文件处理与 AIOsandbox/opensandbox 编排适配。

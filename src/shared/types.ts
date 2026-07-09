@@ -239,6 +239,16 @@ export type GatewayConfig = {
     enabled: boolean;
     baseUrl: string;
     autoStart: boolean;
+    runtime?: 'docker' | 'aiosandbox';
+    dockerSocketPath?: string;
+    dockerApiVersion?: string;
+    defaultImage?: string;
+    images?: Partial<Record<'python' | 'javascript' | 'bash', string>>;
+    timeoutMs?: number;
+    maxTimeoutMs?: number;
+    memoryMb?: number;
+    maxMemoryMb?: number;
+    networkAccess?: boolean;
   };
 };
 

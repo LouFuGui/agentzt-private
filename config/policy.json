@@ -44,6 +44,15 @@
           "projectId": "agentzt"
         }
       },
+      "sandbox-tools": {
+        "description": "Docker-backed sandbox execution for commands and code snippets with resource limits and audit.",
+        "kind": "tool",
+        "resources": ["sandbox.execute"],
+        "governance": {
+          "organizationId": "openguardrails",
+          "projectId": "agentzt"
+        }
+      },
       "high-blast-radius-tools": {
         "description": "Actions that should require explicit JIT or custom enterprise approval.",
         "kind": "tool",
@@ -66,7 +75,7 @@
     "demo-agent": {
       "description": "Role used by the bundled end-to-end demo. Allows one model and read-only tools so each demo step exercises a distinct control. email.send is never in standing scope — it requires explicit JIT elevation.",
       "models": ["claude-sonnet-4-6", "deepseek-chat"],
-      "tools": ["kb.search", "db.query", "web.fetch"],
+      "tools": ["kb.search", "db.query", "web.fetch", "sandbox.execute"],
       "limits": { "maxOutputTokens": 1024, "requestsPerMinute": 60 },
       "jit": {
         "elevatableTools": ["email.send"],

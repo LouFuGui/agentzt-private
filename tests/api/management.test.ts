@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
   sessionService: null as null | {
     verifyToken: (token: string) => { sub: string; role: 'owner' | 'admin' | 'viewer' };
   },
+  sandboxRuns: [] as Array<{
+    args: Record<string, unknown>;
+    ctx: { agentId: string; role: string; requestId: string };
+  }>,
   policy: {
     version: 1,
     defaultDeny: true,
@@ -57,6 +61,24 @@ vi.mock('../../src/shared/config.ts', () => ({
 
 vi.mock('../../src/api/session.ts', () => ({
   getSessionTokenService: () => state.sessionService,
+}));
+
+vi.mock('../../src/gateway/tool-registry.ts', () => ({
+  getTool: (name: string) => {
+    if (name !== 'sandbox.execute') return undefined;
+    return {
+      name: 'sandbox.execute',
+      description: 'test sandbox tool',
+      validate: (args: Record<string, unknown>) =>
+        typeof args['command'] === 'string' || typeof args['code'] === 'string'
+          ? null
+          : 'command or code is required',
+      run: (args: Record<string, unknown>, ctx: { agentId: string; role: string; requestId: string }) => {
+        state.sandboxRuns.push({ args, ctx });
+        return { ok: true, output: { sandboxId: 'sbx-test', output: 'ok' } };
+      },
+    };
+  },
 }));
 
 const { routeManagementApi } = await import('../../src/api/management.ts');
@@ -110,6 +132,7 @@ describe('enterprise management API', () => {
       }],
     };
     state.sessionService = null;
+    state.sandboxRuns = [];
     server = createServer(async (req, res) => {
       if (await routeManagementApi(req, res)) return;
       res.writeHead(404, { 'content-type': 'application/json' });
@@ -288,5 +311,21 @@ describe('enterprise management API', () => {
     expect(audit.status).toBe(200);
     expect(audit.body.events).toEqual([]);
     expect(audit.body.verify).toEqual({ ok: true, count: 0 });
+  });
+
+  it('lets admins execute the sandbox debug endpoint', async () => {
+    const adminHeaders = { 'x-user-id': 'admin-01', 'x-user-role': 'admin' };
+
+    const response = await request(port, 'POST', '/api/v1/sandbox/execute', {
+      command: 'echo debug',
+    }, adminHeaders);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: true, output: { sandboxId: 'sbx-test' } });
+    expect(state.sandboxRuns).toHaveLength(1);
+    expect(state.sandboxRuns[0]).toMatchObject({
+      args: { command: 'echo debug' },
+      ctx: { agentId: 'management:admin-01', role: 'admin' },
+    });
   });
 });

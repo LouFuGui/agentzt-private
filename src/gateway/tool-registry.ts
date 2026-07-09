@@ -4,8 +4,10 @@
 // so the demo is self-contained; in production these wrap real internal APIs.
 
 import { aiosandboxManager, AIOsandboxClient } from './aiosandbox.ts';
+import { DockerSandboxRuntime } from './docker-sandbox.ts';
 import { loadGatewayConfig } from '../shared/config.ts';
 import { TemporalClient } from './temporal-client.ts';
+import type { SandboxCodeLanguage, SandboxExecuteRequest } from './docker-sandbox.ts';
 
 export type ToolContext = {
   agentId: string;
@@ -61,9 +63,63 @@ function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 10
   return null;
 }
 
+function optionalBoolean(args: Record<string, unknown>, key: string): string | null {
+  const v = args[key];
+  if (v === undefined) return null;
+  return typeof v === 'boolean' ? null : `parameter "${key}" must be a boolean`;
+}
+
+function optionalPositiveInteger(args: Record<string, unknown>, key: string, max: number): string | null {
+  const v = args[key];
+  if (v === undefined) return null;
+  if (!Number.isInteger(v) || Number(v) <= 0) return `parameter "${key}" must be a positive integer`;
+  if (Number(v) > max) return `parameter "${key}" exceeds ${max}`;
+  return null;
+}
+
+function validateSandboxExecute(a: Record<string, unknown>): string | null {
+  const mode = a['mode'] ?? (a['command'] !== undefined ? 'command' : 'code');
+  if (mode !== 'command' && mode !== 'code') return 'parameter "mode" must be "command" or "code"';
+  if (mode === 'command') {
+    const err = requireString(a, 'command', 8192);
+    if (err) return err;
+    if (a['code'] !== undefined) return 'command execution must not include "code"';
+  } else {
+    const codeErr = requireString(a, 'code', 128 * 1024);
+    if (codeErr) return codeErr;
+    const lang = a['language'];
+    if (lang !== 'python' && lang !== 'javascript' && lang !== 'bash') {
+      return 'parameter "language" must be one of: python, javascript, bash';
+    }
+    if (a['command'] !== undefined) return 'code execution must not include "command"';
+  }
+  return optionalPositiveInteger(a, 'timeoutMs', 60000)
+    ?? optionalPositiveInteger(a, 'memoryMb', 512)
+    ?? optionalBoolean(a, 'networkAccess');
+}
+
+function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteRequest {
+  const common = {
+    timeoutMs: a['timeoutMs'] as number | undefined,
+    memoryMb: a['memoryMb'] as number | undefined,
+    networkAccess: a['networkAccess'] as boolean | undefined,
+  };
+  const mode = a['mode'] ?? (a['command'] !== undefined ? 'command' : 'code');
+  if (mode === 'command') {
+    return { ...common, mode: 'command', command: String(a['command']) };
+  }
+  return {
+    ...common,
+    mode: 'code',
+    language: a['language'] as SandboxCodeLanguage,
+    code: String(a['code']),
+  };
+}
+
 // ============== AIOsandbox 工具 ==============
 
 let sandboxClient: AIOsandboxClient | undefined;
+let dockerSandboxRuntime: DockerSandboxRuntime | undefined;
 
 async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOsandboxClient> {
   if (!sandboxClient) {
@@ -72,7 +128,50 @@ async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOs
   return sandboxClient;
 }
 
+function getDockerSandboxRuntime(): DockerSandboxRuntime {
+  if (!dockerSandboxRuntime) {
+    const cfg = loadGatewayConfig().sandbox;
+    dockerSandboxRuntime = new DockerSandboxRuntime({
+      socketPath: cfg?.dockerSocketPath,
+      apiVersion: cfg?.dockerApiVersion,
+      defaultImage: cfg?.defaultImage,
+      images: cfg?.images,
+      timeoutMs: cfg?.timeoutMs,
+      maxTimeoutMs: cfg?.maxTimeoutMs,
+      memoryMb: cfg?.memoryMb,
+      maxMemoryMb: cfg?.maxMemoryMb,
+      networkAccess: cfg?.networkAccess,
+    });
+  }
+  return dockerSandboxRuntime;
+}
+
 const SANDBOX_TOOLS: Record<string, ToolDef> = {
+  'sandbox.execute': {
+    name: 'sandbox.execute',
+    description: 'Create a Docker sandbox, execute one command or code snippet, return output, then clean it up.',
+    validate: validateSandboxExecute,
+    run: async (a, ctx) => {
+      const cfg = loadGatewayConfig().sandbox;
+      if (cfg?.enabled === false) return { ok: false, error: 'sandbox runtime is disabled' };
+      if (cfg?.runtime && cfg.runtime !== 'docker') {
+        return { ok: false, error: `sandbox.execute requires docker runtime, got ${cfg.runtime}` };
+      }
+      const result = await getDockerSandboxRuntime().execute(sandboxExecuteRequest(a));
+      return {
+        ok: result.exitCode === 0 && !result.timedOut,
+        output: {
+          ...result,
+          agentId: ctx.agentId,
+          requestId: ctx.requestId,
+        },
+        error: result.exitCode === 0 && !result.timedOut
+          ? undefined
+          : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
+      };
+    },
+  },
+
   'sandbox.shell': {
     name: 'sandbox.shell',
     description: 'Execute a shell command in the isolated AIOsandbox environment.',

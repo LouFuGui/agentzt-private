@@ -434,6 +434,34 @@ async function handleAudit(req: IncomingMessage, res: ServerResponse, method: st
   return true;
 }
 
+async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
+  if (parts[1] !== 'sandbox') return false;
+  if (method !== 'POST' || parts.length !== 3 || parts[2] !== 'execute') return false;
+  const auth = requireRole(req, res, 'admin');
+  if (!auth) return true;
+
+  const body = await readJson<Record<string, unknown>>(req);
+  const args = isObject(body['arguments']) ? body['arguments'] as Record<string, unknown> : body;
+  const { getTool } = await import('../gateway/tool-registry.ts');
+  const tool = getTool('sandbox.execute');
+  if (!tool) {
+    sendError(res, 404, 'not_found', 'sandbox.execute is not implemented');
+    return true;
+  }
+  const validationError = tool.validate(args);
+  if (validationError) {
+    sendError(res, 400, 'invalid_request', validationError);
+    return true;
+  }
+  const result = await tool.run(args, {
+    agentId: `management:${auth.userId}`,
+    role: auth.role,
+    requestId: `management-sandbox-${Date.now()}`,
+  });
+  sendJson(res, result.ok ? 200 : 400, result);
+  return true;
+}
+
 export async function routeManagementApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const parts = managementParts(req);
   if (parts[0] !== 'api') return false;
@@ -442,5 +470,6 @@ export async function routeManagementApi(req: IncomingMessage, res: ServerRespon
     || await handleAgents(req, res, method, parts)
     || await handleRoles(req, res, method, parts)
     || await handlePolicy(req, res, method, parts)
-    || await handleAudit(req, res, method, parts);
+    || await handleAudit(req, res, method, parts)
+    || await handleSandbox(req, res, method, parts);
 }
