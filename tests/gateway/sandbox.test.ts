@@ -432,6 +432,88 @@ describe('DockerSandboxRuntime', () => {
     }
   });
 
+  it('selects runtime providers by tenant, role, resource, and priority scheduling', async () => {
+    const hits: string[] = [];
+    const makeProvider = async (name: string) => {
+      const server = createServer(async (req, res) => {
+        await readBody(req);
+        hits.push(name);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ sandboxId: name, output: name, exitCode: 0 }));
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error(`${name} did not bind a TCP port`);
+      return {
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () => server.close(),
+      };
+    };
+    const defaultProvider = await makeProvider('default');
+    const enterpriseProvider = await makeProvider('enterprise');
+    const { createSandboxRuntime, describeSandboxRuntimeRegistry } = await import('../../src/gateway/sandbox-runtime.ts');
+    try {
+      const cfg = {
+        enabled: true,
+        runtime: 'http' as const,
+        baseUrl: defaultProvider.baseUrl,
+        autoStart: false,
+        scheduling: { policy: 'priority' as const },
+        runtimes: [
+          {
+            name: 'default',
+            type: 'http' as const,
+            enabled: true,
+            baseUrl: defaultProvider.baseUrl,
+            capacity: 100,
+            priority: 1,
+            allowedTenantIds: ['default'],
+            allowedRoles: ['viewer'],
+            allowedProjectIds: ['agentzt'],
+            resources: ['sandbox.execute'],
+            capabilities: ['sandbox.execute'],
+          },
+          {
+            name: 'enterprise',
+            type: 'http' as const,
+            enabled: true,
+            baseUrl: enterpriseProvider.baseUrl,
+            capacity: 1,
+            priority: 10,
+            allowedTenantIds: ['enterprise'],
+            allowedRoles: ['admin'],
+            allowedProjectIds: ['secure'],
+            resources: ['sandbox.browser'],
+            capabilities: ['sandbox.browser'],
+          },
+        ],
+      };
+
+      const selection = {
+        tenantId: 'enterprise',
+        role: 'admin',
+        projectId: 'secure',
+        resource: 'sandbox.browser',
+        capability: 'sandbox.browser',
+      };
+      const registry = await describeSandboxRuntimeRegistry(cfg, selection);
+      const runtime = createSandboxRuntime(cfg, selection);
+      const result = await runtime.execute({ mode: 'command', command: 'echo selected' });
+
+      expect(registry.selected?.name).toBe('enterprise');
+      expect(registry.scheduling).toBe('priority');
+      expect(registry.runtimes).toEqual([
+        expect.objectContaining({ name: 'default', eligible: false, selected: false, reason: 'tenant "enterprise" is not allowed' }),
+        expect.objectContaining({ name: 'enterprise', eligible: true, selected: true }),
+      ]);
+      expect(result.sandboxId).toBe('enterprise');
+      expect(hits).toEqual(['enterprise', 'enterprise']);
+    } finally {
+      defaultProvider.close();
+      enterpriseProvider.close();
+    }
+  });
+
   it('supports Docker agent process sandbox lifecycle', async () => {
     const docker = await makeDockerApi();
     try {

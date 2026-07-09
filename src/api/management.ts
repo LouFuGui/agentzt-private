@@ -16,7 +16,7 @@ import type {
 } from '../shared/types.ts';
 import type { SandboxAgentCreateRequest, SandboxExecuteRequest } from '../gateway/docker-sandbox.ts';
 import type { SandboxRuntime } from '../gateway/sandbox-runtime.ts';
-import { createSandboxRuntime } from '../gateway/sandbox-runtime.ts';
+import { createSandboxRuntime, describeSandboxRuntimeRegistry } from '../gateway/sandbox-runtime.ts';
 import { getSessionTokenService } from './session.ts';
 
 type AuthContext = {
@@ -183,7 +183,7 @@ function sandboxProjectId(body: Record<string, unknown>): string | undefined | n
   return value.trim();
 }
 
-function sandboxRuntimeInstance(selection: { role?: string; projectId?: string; capability?: string } = {}): SandboxRuntime {
+function sandboxRuntimeInstance(selection: { tenantId?: string; role?: string; projectId?: string; capability?: string } = {}): SandboxRuntime {
   const cfg = loadGatewayConfig();
   const key = sandboxRuntimeCacheKey(cfg, selection);
   if (!sandboxRuntime || sandboxRuntimeKey !== key) {
@@ -195,7 +195,7 @@ function sandboxRuntimeInstance(selection: { role?: string; projectId?: string; 
 
 function sandboxRuntimeCacheKey(
   cfg: ReturnType<typeof loadGatewayConfig>,
-  selection: { role?: string; projectId?: string; capability?: string },
+  selection: { tenantId?: string; role?: string; projectId?: string; capability?: string },
 ): string {
   const sandbox = cfg.sandbox;
   return [
@@ -205,6 +205,9 @@ function sandboxRuntimeCacheKey(
     sandbox?.healthPath ?? '',
     sandbox?.executePath ?? '',
     sandbox?.agentPath ?? '',
+    JSON.stringify(sandbox?.runtimes ?? []),
+    sandbox?.scheduling?.policy ?? '',
+    selection.tenantId ?? '',
     selection.role ?? '',
     selection.projectId ?? '',
     selection.capability ?? '',
@@ -501,21 +504,23 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
   if (parts[1] !== 'sandbox') return false;
   if (method === 'GET' && parts.length === 3 && parts[2] === 'runtimes') {
     if (!requireRole(req, res, 'viewer')) return true;
+    const url = new URL(req.url ?? '/', 'http://management.local');
     const cfg = loadGatewayConfig().sandbox;
-    const health = cfg?.enabled === false ? { runtime: cfg?.runtime ?? 'docker', healthy: false, reason: 'sandbox disabled' }
-      : await sandboxRuntimeInstance().health();
+    const capability = url.searchParams.get('capability') ?? url.searchParams.get('resource') ?? undefined;
+    const registry = await describeSandboxRuntimeRegistry(cfg, {
+      tenantId: url.searchParams.get('tenantId') ?? undefined,
+      role: url.searchParams.get('role') ?? undefined,
+      projectId: url.searchParams.get('projectId') ?? undefined,
+      resource: url.searchParams.get('resource') ?? undefined,
+      capability,
+    });
     sendJson(res, 200, {
-      selected: cfg?.runtime ?? 'docker',
-      health,
-      runtimes: cfg?.runtimes ?? [{
-        name: cfg?.runtime ?? 'docker',
-        type: cfg?.runtime ?? 'docker',
-        enabled: cfg?.enabled !== false,
-        baseUrl: cfg?.baseUrl,
-        healthPath: cfg?.healthPath,
-        executePath: cfg?.executePath,
-        capacity: 1,
-      }],
+      selected: registry.selected?.type ?? cfg?.runtime ?? 'docker',
+      selectedRuntime: registry.selected,
+      scheduling: registry.scheduling,
+      selection: registry.selection,
+      health: registry.health,
+      runtimes: registry.runtimes,
       defaults: {
         timeoutMs: cfg?.timeoutMs,
         memoryMb: cfg?.memoryMb,

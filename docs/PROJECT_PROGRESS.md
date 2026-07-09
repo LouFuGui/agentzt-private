@@ -188,3 +188,11 @@
   - `sandbox.shell`、`sandbox.file.read`、`sandbox.file.write`、`sandbox.jupyter.execute` 逐步收敛到统一 `sandbox.execute` policy/runtime helper，不再绕过沙盒策略与统一审计 meta。
   - `config/gateway.json` 的 runtime registry 示例补充 AIO Sandbox/OpenSandbox API key env、capabilities、networkPolicy、filesystemPolicy 与 project 选择示例。
 - 当前仍未宣称完成完整企业沙盒平台：OpenSandbox execd 流式 command/file/code、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明与调度状态持久化仍可继续增强。
+
+### 企业沙盒编排平台推进
+
+- 本轮继续把 AgentZT 作为沙盒控制面推进到“registry + 调度元数据”层：
+  - `SandboxRuntimeProviderConfig` 增加 `tenant`、`project`、`role`、`resource` 选择维度，补充 `priority` 与全局 `scheduling.policy`，使 provider 选择可按容量或优先级调度。
+  - 管理 API `/api/v1/sandbox/runtimes` 支持通过 query 传入 `tenantId`、`role`、`projectId`、`resource/capability` 查看过滤后的 registry 决策，返回 selected provider、eligible/reason、health 与调度策略。
+  - runtime registry 配置增加 OpenSandbox 式能力声明：长任务、会话复用、文件工件、浏览器、Jupyter、MCP 等作为 provider capability/orchestration metadata 暴露，先完成控制面声明与选择，不声称已经实现所有 runtime 能力。
+- 下一步建议进入真正 stateful 编排：健康快照缓存、provider failure counter、sessionId 到 sandbox/container 绑定、长任务状态机、artifact 元数据与 TTL 清理。

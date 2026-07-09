@@ -456,6 +456,89 @@ describe('enterprise management API', () => {
     }
   });
 
+  it('filters sandbox runtime registry by project role resource and exposes capability declarations', async () => {
+    const sandboxApi = createServer(async (req, res) => {
+      if (req.method === 'GET' && req.url === '/v1/sandbox/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => sandboxApi.listen(0, '127.0.0.1', () => resolve()));
+    const address = sandboxApi.address() as AddressInfo;
+    state.gateway.sandbox.baseUrl = `http://127.0.0.1:${address.port}`;
+    state.gateway.sandbox.runtimes = [
+      {
+        name: 'default',
+        type: 'http',
+        enabled: true,
+        baseUrl: state.gateway.sandbox.baseUrl,
+        capacity: 100,
+        priority: 1,
+        allowedTenantIds: ['default'],
+        allowedRoles: ['viewer'],
+        allowedProjectIds: ['agentzt'],
+        resources: ['sandbox.execute'],
+        capabilities: ['sandbox.execute'],
+      },
+      {
+        name: 'browser-jupyter',
+        type: 'http',
+        enabled: true,
+        baseUrl: state.gateway.sandbox.baseUrl,
+        capacity: 1,
+        priority: 10,
+        allowedTenantIds: ['enterprise'],
+        allowedRoles: ['admin'],
+        allowedProjectIds: ['agentzt'],
+        resources: ['sandbox.browser'],
+        capabilities: ['sandbox.browser', 'sandbox.jupyter.execute'],
+        capabilityDeclarations: [
+          { name: 'sandbox.browser', kind: 'browser', longTasks: true, sessionReuse: true, artifacts: true },
+        ],
+        orchestration: { longTasks: true, sessionReuse: true, artifacts: true, browser: true, jupyter: true, mcp: false },
+      },
+    ] as typeof state.gateway.sandbox.runtimes;
+    state.gateway.sandbox.scheduling = { policy: 'priority' };
+    try {
+      const response = await request(
+        port,
+        'GET',
+        '/api/v1/sandbox/runtimes?tenantId=enterprise&role=admin&projectId=agentzt&resource=sandbox.browser',
+        undefined,
+        { 'x-user-id': 'viewer-01', 'x-user-role': 'viewer' },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        selected: 'http',
+        selectedRuntime: {
+          name: 'browser-jupyter',
+          capabilityDeclarations: [
+            { name: 'sandbox.browser', kind: 'browser', longTasks: true, sessionReuse: true, artifacts: true },
+          ],
+          orchestration: { browser: true, jupyter: true },
+        },
+        scheduling: 'priority',
+        selection: {
+          tenantId: 'enterprise',
+          role: 'admin',
+          projectId: 'agentzt',
+          resource: 'sandbox.browser',
+          capability: 'sandbox.browser',
+        },
+        runtimes: [
+          { name: 'default', eligible: false, selected: false, reason: 'tenant "enterprise" is not allowed' },
+          { name: 'browser-jupyter', eligible: true, selected: true },
+        ],
+      });
+    } finally {
+      sandboxApi.close();
+    }
+  });
+
   it('manages agent process sandbox lifecycle through runtime adapter', async () => {
     const calls: string[] = [];
     const sandboxApi = createServer(async (req, res) => {

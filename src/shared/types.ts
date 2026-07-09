@@ -203,10 +203,31 @@ export type SandboxRuntimeProviderConfig = {
   apiKeyEnv?: string;
   enabled?: boolean;
   capacity?: number;
+  priority?: number;
   defaultImage?: string;
+  allowedTenantIds?: string[];
   allowedRoles?: string[];
   allowedProjectIds?: string[];
+  resources?: string[];
   capabilities?: string[];
+  capabilityDeclarations?: Array<{
+    name: string;
+    kind?: 'execute' | 'shell' | 'file' | 'jupyter' | 'browser' | 'mcp' | 'agent';
+    longTasks?: boolean;
+    sessionReuse?: boolean;
+    artifacts?: boolean;
+    description?: string;
+  }>;
+  orchestration?: {
+    longTasks?: boolean;
+    sessionReuse?: boolean;
+    artifacts?: boolean;
+    browser?: boolean;
+    jupyter?: boolean;
+    mcp?: boolean;
+    maxTaskDurationMs?: number;
+    maxIdleMs?: number;
+  };
   networkPolicy?: {
     defaultAccess?: boolean;
     egress?: string[];
@@ -290,6 +311,9 @@ export type GatewayConfig = {
     networkAccess?: boolean;
     filesystemAccess?: string[];
     policy?: SandboxPolicyConfig;
+    scheduling?: {
+      policy?: 'capacity' | 'priority';
+    };
     runtimes?: SandboxRuntimeProviderConfig[];
     modelValidation?: {
       enabled?: boolean;

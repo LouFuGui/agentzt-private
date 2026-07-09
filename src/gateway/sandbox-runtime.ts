@@ -11,6 +11,7 @@ import type {
 
 export type SandboxRuntimeName = 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
 export type SandboxRuntimeSelection = {
+  tenantId?: string;
   role?: string;
   projectId?: string;
   resource?: string;
@@ -28,6 +29,21 @@ export type SandboxRuntime = {
   execAgent?(sandboxId: string, input: SandboxExecuteRequest): Promise<SandboxExecuteResult>;
   stopAgent?(sandboxId: string): Promise<SandboxAgentLifecycleResult>;
   destroyAgent?(sandboxId: string): Promise<SandboxAgentLifecycleResult>;
+};
+
+export type SandboxRuntimeRegistryEntry = SandboxRuntimeProviderConfig & {
+  eligible: boolean;
+  selected: boolean;
+  reason?: string;
+  health?: SandboxHealth;
+};
+
+export type SandboxRuntimeRegistry = {
+  selected?: SandboxRuntimeProviderConfig;
+  scheduling: 'capacity' | 'priority';
+  selection: SandboxRuntimeSelection;
+  health?: SandboxHealth;
+  runtimes: SandboxRuntimeRegistryEntry[];
 };
 
 export type HttpSandboxRuntimeConfig = {
@@ -52,6 +68,8 @@ type HttpSandboxResponse = Partial<SandboxExecuteResult> & {
   sandboxId?: string;
   sandbox_id?: string;
 };
+
+type SandboxSchedulingPolicy = 'capacity' | 'priority';
 
 export class HttpSandboxRuntime implements SandboxRuntime {
   readonly name: Exclude<SandboxRuntimeName, 'docker'>;
@@ -412,29 +430,96 @@ function sandboxAuthHeaders(apiKeyEnv?: string): Record<string, string> {
   };
 }
 
-function runtimeProvider(cfg: GatewayConfig['sandbox'], selection: SandboxRuntimeSelection = {}): SandboxRuntimeProviderConfig | undefined {
-  const providers = (cfg?.runtimes ?? []).filter((provider) => provider.enabled !== false);
+function runtimeProviders(cfg: GatewayConfig['sandbox']): SandboxRuntimeProviderConfig[] {
+  if (cfg?.runtimes?.length) return cfg.runtimes;
+  return [{
+    name: cfg?.runtime ?? 'docker',
+    type: cfg?.runtime ?? 'docker',
+    enabled: cfg?.enabled !== false,
+    baseUrl: cfg?.baseUrl,
+    healthPath: cfg?.healthPath,
+    executePath: cfg?.executePath,
+    agentPath: cfg?.agentPath,
+    capacity: 1,
+    defaultImage: cfg?.defaultImage,
+  }];
+}
+
+export function selectSandboxRuntimeProvider(
+  cfg: GatewayConfig['sandbox'],
+  selection: SandboxRuntimeSelection = {},
+): SandboxRuntimeProviderConfig | undefined {
+  const providers = runtimeProviders(cfg).filter((provider) => provider.enabled !== false);
   const target = cfg?.runtime ?? 'docker';
   const candidates = providers.filter((provider) =>
     provider.name === target || provider.type === target);
   const pool = candidates.length ? candidates : providers;
-  const compatible = pool.filter((provider) => providerMatches(provider, selection));
-  return [...compatible].sort((a, b) => (b.capacity ?? 1) - (a.capacity ?? 1))[0];
+  const compatible = pool.filter((provider) => providerMatchReason(provider, selection) === undefined);
+  return [...compatible].sort((a, b) => compareProviders(a, b, cfg?.scheduling?.policy))[0];
 }
 
-function providerMatches(provider: SandboxRuntimeProviderConfig, selection: SandboxRuntimeSelection): boolean {
-  if (selection.role && provider.allowedRoles && !provider.allowedRoles.includes(selection.role)) return false;
-  if (selection.projectId && provider.allowedProjectIds && !provider.allowedProjectIds.includes(selection.projectId)) return false;
-  if (selection.capability && provider.capabilities && !provider.capabilities.includes(selection.capability)) return false;
-  if (selection.resource && provider.capabilities && !provider.capabilities.includes(selection.resource)) return false;
-  return true;
+export async function describeSandboxRuntimeRegistry(
+  cfg: GatewayConfig['sandbox'],
+  selection: SandboxRuntimeSelection = {},
+): Promise<SandboxRuntimeRegistry> {
+  const selected = selectSandboxRuntimeProvider(cfg, selection);
+  const health = cfg?.enabled === false
+    ? { runtime: cfg?.runtime ?? 'docker', healthy: false, reason: 'sandbox disabled' }
+    : await createSandboxRuntime(cfg, selection).health();
+  return {
+    selected,
+    scheduling: cfg?.scheduling?.policy ?? 'capacity',
+    selection,
+    health,
+    runtimes: runtimeProviders(cfg).map((provider) => {
+      const reason = provider.enabled === false ? 'runtime disabled' : providerMatchReason(provider, selection);
+      return {
+        ...provider,
+        eligible: reason === undefined,
+        selected: selected?.name === provider.name,
+        reason,
+        health: selected?.name === provider.name ? health : undefined,
+      };
+    }),
+  };
+}
+
+function compareProviders(
+  a: SandboxRuntimeProviderConfig,
+  b: SandboxRuntimeProviderConfig,
+  policy: SandboxSchedulingPolicy = 'capacity',
+): number {
+  const priorityDelta = (b.priority ?? 0) - (a.priority ?? 0);
+  const capacityDelta = (b.capacity ?? 1) - (a.capacity ?? 1);
+  if (policy === 'priority') return priorityDelta || capacityDelta;
+  return capacityDelta || priorityDelta;
+}
+
+function providerMatchReason(provider: SandboxRuntimeProviderConfig, selection: SandboxRuntimeSelection): string | undefined {
+  if (selection.tenantId && provider.allowedTenantIds && !provider.allowedTenantIds.includes(selection.tenantId)) {
+    return `tenant "${selection.tenantId}" is not allowed`;
+  }
+  if (selection.role && provider.allowedRoles && !provider.allowedRoles.includes(selection.role)) {
+    return `role "${selection.role}" is not allowed`;
+  }
+  if (selection.projectId && provider.allowedProjectIds && !provider.allowedProjectIds.includes(selection.projectId)) {
+    return `project "${selection.projectId}" is not allowed`;
+  }
+  const resource = selection.resource ?? selection.capability;
+  if (resource && provider.resources && !provider.resources.includes(resource)) {
+    return `resource "${resource}" is not allowed`;
+  }
+  if (selection.capability && provider.capabilities && !provider.capabilities.includes(selection.capability)) {
+    return `capability "${selection.capability}" is not declared`;
+  }
+  return undefined;
 }
 
 export function createSandboxRuntime(
   cfg: GatewayConfig['sandbox'],
   selection: SandboxRuntimeSelection = {},
 ): SandboxRuntime {
-  const provider = runtimeProvider(cfg, selection);
+  const provider = selectSandboxRuntimeProvider(cfg, selection);
   const runtime = provider?.type ?? cfg?.runtime ?? 'docker';
   if (runtime === 'docker') {
     const dockerConfig: DockerSandboxConfig = {
