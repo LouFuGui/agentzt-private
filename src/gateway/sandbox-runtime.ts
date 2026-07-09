@@ -18,7 +18,7 @@ export type SandboxRuntimeSelection = {
   capability?: string;
 };
 // Health checks stay short even for long-running execution runtimes.
-const SANDBOX_HEALTH_TIMEOUT_MS = 5000;
+const SANDBOX_HEALTH_CHECK_TIMEOUT_MS = 5000;
 
 export type SandboxRuntime = {
   readonly name: SandboxRuntimeName;
@@ -97,7 +97,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       const res = await fetch(`${this.baseUrl}${this.healthPath}`, {
         method: 'GET',
         headers: this.headers,
-        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_TIMEOUT_MS)),
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_CHECK_TIMEOUT_MS)),
       });
       if (!res.ok) return { runtime: this.name, healthy: false, reason: `HTTP ${res.status}` };
       return { runtime: this.name, healthy: true };
@@ -332,7 +332,7 @@ export class OpenSandboxRuntime extends HttpSandboxRuntime {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'GET',
         headers: this.headers,
-        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_TIMEOUT_MS)),
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, SANDBOX_HEALTH_CHECK_TIMEOUT_MS)),
       });
       if (!res.ok) return { runtime: 'opensandbox', healthy: false, reason: `HTTP ${res.status}` };
       return { runtime: 'opensandbox', healthy: true };
@@ -496,11 +496,11 @@ function compareProviders(
 }
 
 function providerMatchReason(provider: SandboxRuntimeProviderConfig, selection: SandboxRuntimeSelection): string | undefined {
-  const tenantReason = allowlistReason('tenant', selection.tenantId, provider.allowedTenantIds);
+  const tenantReason = allowlistDenyReason('tenant', selection.tenantId, provider.allowedTenantIds);
   if (tenantReason) return tenantReason;
-  const roleReason = allowlistReason('role', selection.role, provider.allowedRoles);
+  const roleReason = allowlistDenyReason('role', selection.role, provider.allowedRoles);
   if (roleReason) return roleReason;
-  const projectReason = allowlistReason('project', selection.projectId, provider.allowedProjectIds);
+  const projectReason = allowlistDenyReason('project', selection.projectId, provider.allowedProjectIds);
   if (projectReason) return projectReason;
   const resource = selection.resource ?? selection.capability;
   if (resource && provider.resources && !provider.resources.includes(resource)) {
@@ -512,7 +512,7 @@ function providerMatchReason(provider: SandboxRuntimeProviderConfig, selection: 
   return undefined;
 }
 
-function allowlistReason(kind: string, value: string | undefined, allowlist: string[] | undefined): string | undefined {
+function allowlistDenyReason(kind: string, value: string | undefined, allowlist: string[] | undefined): string | undefined {
   if (!value || !allowlist || allowlist.includes(value)) return undefined;
   return `${kind} "${value}" is not allowed`;
 }
