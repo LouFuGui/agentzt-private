@@ -510,7 +510,7 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
     action: 'tool.call',
     resource: 'sandbox.execute',
     decision: policyDecision === 'deny' ? 'deny' : 'allow',
-    reason: result.error ?? 'management sandbox execute',
+    reason: result.error ?? 'management sandbox execute succeeded',
     latencyMs: Date.now() - started,
     userId: auth.userId,
     governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,

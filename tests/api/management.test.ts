@@ -349,7 +349,7 @@ describe('enterprise management API', () => {
       action: 'tool.call',
       resource: 'sandbox.execute',
       decision: 'allow',
-      reason: 'management sandbox execute',
+      reason: 'management sandbox execute succeeded',
       userId: 'admin-01',
       meta: {
         ok: true,
