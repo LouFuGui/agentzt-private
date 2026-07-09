@@ -3,6 +3,7 @@ import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
 const log = makeLogger('docker-sandbox');
+const SANDBOX_TIMEOUT_EXIT_CODE = 124;
 
 export type SandboxExecuteMode = 'command' | 'code';
 export type SandboxCodeLanguage = 'python' | 'javascript' | 'bash';
@@ -191,7 +192,8 @@ export class DockerSandboxRuntime {
         if ((err as Error).name !== 'AbortError' && (err as Error).name !== 'TimeoutError') throw err;
         timedOut = true;
         await this.kill(containerId);
-        wait = { StatusCode: 124, Error: { Message: 'sandbox execution timed out' } };
+        // Match the conventional timeout(1) exit code so callers can classify timeouts.
+        wait = { StatusCode: SANDBOX_TIMEOUT_EXIT_CODE, Error: { Message: 'sandbox execution timed out' } };
       }
 
       const output = await this.client.request<string>(
@@ -225,10 +227,10 @@ export class DockerSandboxRuntime {
   }
 
   private commandFor(input: SandboxExecuteRequest): string[] {
-    if (input.mode === 'command') return ['sh', '-lc', input.command];
+    if (input.mode === 'command') return ['sh', '-c', input.command];
     if (input.language === 'python') return ['python3', '-c', input.code];
     if (input.language === 'javascript') return ['node', '-e', input.code];
-    return ['bash', '-lc', input.code];
+    return ['bash', '-c', input.code];
   }
 
   private async kill(containerId: string): Promise<void> {

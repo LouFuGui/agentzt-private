@@ -78,9 +78,9 @@ async function makeDockerApi(): Promise<{
       return;
     }
     if (req.method === 'GET' && req.url === '/v1.41/containers/container-1/logs?stdout=true&stderr=true') {
-      const createBody = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
+      const containerCreateBody = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
       res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end(`ran:${createBody?.Cmd.join(' ') ?? ''}`);
+      res.end(`ran:${containerCreateBody?.Cmd.join(' ') ?? ''}`);
       return;
     }
     if (req.method === 'DELETE' && req.url === '/v1.41/containers/container-1?force=true&v=true') {
@@ -153,11 +153,11 @@ describe('DockerSandboxRuntime', () => {
       expect(result).toMatchObject({
         mode: 'command',
         image: 'alpine:test',
-        command: ['sh', '-lc', 'echo ok'],
+        command: ['sh', '-c', 'echo ok'],
         exitCode: 0,
         timedOut: false,
       });
-      expect(result.output).toContain('ran:sh -lc echo ok');
+      expect(result.output).toContain('ran:sh -c echo ok');
       expect(docker.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
         'POST /v1.41/containers/create',
         'POST /v1.41/containers/container-1/start',

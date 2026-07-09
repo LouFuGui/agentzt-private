@@ -121,7 +121,7 @@ function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteReques
   };
 }
 
-// ============== AIOsandbox tools ==============
+// ============== Sandbox tools (Docker MVP + AIOsandbox adapters) ==============
 
 let sandboxClient: AIOsandboxClient | undefined;
 let dockerSandboxRuntime: DockerSandboxRuntime | undefined;
