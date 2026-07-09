@@ -29,6 +29,11 @@ export type ToolDef = {
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
 
+const SANDBOX_COMMAND_MAX_CHARS = 8192;
+const SANDBOX_CODE_MAX_CHARS = 128 * 1024;
+const SANDBOX_TIMEOUT_MAX_MS = 60000;
+const SANDBOX_MEMORY_MAX_MB = 512;
+
 function validateStringParameter(v: unknown, key: string, max: number): string | null {
   if (typeof v !== 'string') return `parameter "${key}" must be a string`;
   if (v.length === 0) return `parameter "${key}" must not be empty`;
@@ -81,11 +86,11 @@ function validateSandboxExecute(a: Record<string, unknown>): string | null {
   const mode = a['mode'] ?? (a['command'] !== undefined ? 'command' : 'code');
   if (mode !== 'command' && mode !== 'code') return 'parameter "mode" must be "command" or "code"';
   if (mode === 'command') {
-    const err = requireString(a, 'command', 8192);
+    const err = requireString(a, 'command', SANDBOX_COMMAND_MAX_CHARS);
     if (err) return err;
     if (a['code'] !== undefined) return 'command execution must not include "code"';
   } else {
-    const codeErr = requireString(a, 'code', 128 * 1024);
+    const codeErr = requireString(a, 'code', SANDBOX_CODE_MAX_CHARS);
     if (codeErr) return codeErr;
     const lang = a['language'];
     if (lang !== 'python' && lang !== 'javascript' && lang !== 'bash') {
@@ -93,8 +98,8 @@ function validateSandboxExecute(a: Record<string, unknown>): string | null {
     }
     if (a['command'] !== undefined) return 'code execution must not include "command"';
   }
-  return optionalPositiveInteger(a, 'timeoutMs', 60000)
-    ?? optionalPositiveInteger(a, 'memoryMb', 512)
+  return optionalPositiveInteger(a, 'timeoutMs', SANDBOX_TIMEOUT_MAX_MS)
+    ?? optionalPositiveInteger(a, 'memoryMb', SANDBOX_MEMORY_MAX_MB)
     ?? optionalBoolean(a, 'networkAccess');
 }
 

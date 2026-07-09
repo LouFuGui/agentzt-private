@@ -10,6 +10,15 @@ import type { Server } from 'node:http';
 
 const roots: string[] = [];
 
+type DockerCreateBody = {
+  Image: string;
+  Cmd: string[];
+  HostConfig: {
+    NetworkMode: string;
+    Memory: number;
+  };
+};
+
 function makeRoot(): string {
   const root = join(tmpdir(), `agentzt-sandbox-${randomUUID()}`);
   roots.push(root);
@@ -68,9 +77,9 @@ async function makeDockerApi(): Promise<{
       return;
     }
     if (req.method === 'GET' && req.url === '/v1.41/containers/container-1/logs?stdout=true&stderr=true') {
-      const create = requests.find((r) => r.url === '/v1.41/containers/create')?.body as { Cmd?: string[] } | undefined;
+      const create = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
       res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end(`ran:${create?.Cmd?.join(' ') ?? ''}`);
+      res.end(`ran:${create?.Cmd.join(' ') ?? ''}`);
       return;
     }
     if (req.method === 'DELETE' && req.url === '/v1.41/containers/container-1?force=true&v=true') {
@@ -155,7 +164,7 @@ describe('DockerSandboxRuntime', () => {
         'GET /v1.41/containers/container-1/logs?stdout=true&stderr=true',
         'DELETE /v1.41/containers/container-1?force=true&v=true',
       ]);
-      const create = docker.requests[0]?.body as { HostConfig?: { NetworkMode?: string; Memory?: number } };
+      const create = docker.requests[0]?.body as DockerCreateBody;
       expect(create.HostConfig).toMatchObject({ NetworkMode: 'none', Memory: 256 * 1024 * 1024 });
     } finally {
       await docker.close();
