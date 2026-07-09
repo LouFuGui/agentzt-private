@@ -125,7 +125,7 @@ function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteReques
   };
 }
 
-// ============== Sandbox tools (Docker MVP + AIOsandbox adapters) ==============
+// ============== Sandbox tools (Docker + HTTP runtime adapters) ==============
 
 let sandboxClient: AIOsandboxClient | undefined;
 let sandboxRuntime: SandboxRuntime | undefined;
@@ -175,7 +175,7 @@ function decideSandboxPolicy(
     }
   }
   if (input.mode === 'command' && policy.allowedCommands) {
-    const commandName = input.command.trim().split(/\s+/, 1)[0] ?? '';
+    const commandName = input.command.trim().split(/\s+/, 1)[0] as string;
     meta['commandName'] = commandName;
     if (!policy.allowedCommands.includes(commandName)) {
       return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };
@@ -220,14 +220,15 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
         };
       }
       const result = await getSandboxRuntime().execute(request);
+      const success = result.exitCode === 0 && !result.timedOut;
       return {
-        ok: result.exitCode === 0 && !result.timedOut,
+        ok: success,
         output: {
           ...result,
           agentId: ctx.agentId,
           requestId: ctx.requestId,
         },
-        error: result.exitCode === 0 && !result.timedOut
+        error: success
           ? undefined
           : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
         auditMeta: {

@@ -74,12 +74,14 @@ async function makeDockerApi(): Promise<{
   const root = makeRoot();
   const socketPath = join(root, 'docker.sock');
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
+  let createRequest: DockerCreateBody | undefined;
   const server = createServer(async (req, res) => {
     const raw = await readBody(req);
     const body = raw ? JSON.parse(raw) : undefined;
     requests.push({ method: req.method, url: req.url, body });
 
     if (req.method === 'POST' && req.url === '/v1.41/containers/create') {
+      createRequest = body as DockerCreateBody;
       res.writeHead(201, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ Id: 'container-1' }));
       return;
@@ -95,9 +97,8 @@ async function makeDockerApi(): Promise<{
       return;
     }
     if (req.method === 'GET' && req.url === '/v1.41/containers/container-1/logs?stdout=true&stderr=true') {
-      const containerCreateBody = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
       res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end(`ran:${containerCreateBody?.Cmd.join(' ') ?? ''}`);
+      res.end(`ran:${createRequest?.Cmd.join(' ') ?? ''}`);
       return;
     }
     if (req.method === 'DELETE' && req.url === '/v1.41/containers/container-1?force=true&v=true') {

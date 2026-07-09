@@ -3,8 +3,8 @@ import { makeLogger } from '../shared/log.ts';
 import { newId } from '../shared/crypto.ts';
 
 const log = makeLogger('docker-sandbox');
-// 124 matches GNU coreutils timeout(1), giving callers a familiar way to classify timeouts.
-const SANDBOX_TIMEOUT_EXIT_CODE = 124;
+// Exit code 124 follows the GNU coreutils timeout(1) convention.
+const SANDBOX_TIMEOUT_EXIT_CODE_GNU_COMPAT = 124;
 
 export type SandboxExecuteMode = 'command' | 'code';
 export type SandboxCodeLanguage = 'python' | 'javascript' | 'bash';
@@ -198,7 +198,7 @@ export class DockerSandboxRuntime {
         timedOut = true;
         await this.kill(containerId);
         // Match the conventional timeout(1) exit code so callers can classify timeouts.
-        wait = { StatusCode: SANDBOX_TIMEOUT_EXIT_CODE, Error: { Message: 'sandbox execution timed out' } };
+        wait = { StatusCode: SANDBOX_TIMEOUT_EXIT_CODE_GNU_COMPAT, Error: { Message: 'sandbox execution timed out' } };
       }
 
       const output = await this.client.request<string>(

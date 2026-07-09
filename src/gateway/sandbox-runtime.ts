@@ -1,4 +1,4 @@
-import { dockerSandboxCommandFor, DockerSandboxRuntime } from './docker-sandbox.ts';
+import { DockerSandboxRuntime } from './docker-sandbox.ts';
 import type { GatewayConfig } from '../shared/types.ts';
 import type {
   DockerSandboxConfig,
@@ -66,7 +66,7 @@ export class HttpSandboxRuntime implements SandboxRuntime {
       mode: input.mode,
       language: input.mode === 'code' ? input.language : undefined,
       image: body.image ?? this.defaultImage,
-      command: body.command ?? dockerSandboxCommandFor(input),
+      command: body.command ?? [],
       exitCode,
       output: String(output ?? ''),
       timedOut: body.timedOut ?? false,

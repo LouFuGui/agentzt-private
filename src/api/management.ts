@@ -463,7 +463,7 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
     requestId: `management-sandbox-${Date.now()}`,
     governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
   });
-  const { auditMeta: _auditMeta, ...wireResult } = result;
+  const wireResult = { ok: result.ok, output: result.output, error: result.error };
   sendJson(res, wireResult.ok ? 200 : 400, wireResult);
   return true;
 }
