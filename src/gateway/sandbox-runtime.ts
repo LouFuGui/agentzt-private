@@ -455,7 +455,7 @@ export function selectSandboxRuntimeProvider(
     provider.name === target || provider.type === target);
   const pool = candidates.length ? candidates : providers;
   const compatible = pool.filter((provider) => providerMatchReason(provider, selection) === undefined);
-  return [...compatible].sort((a, b) => compareProviders(a, b, cfg?.scheduling?.policy))[0];
+  return compatible.sort((a, b) => compareProviders(a, b, cfg?.scheduling?.policy))[0];
 }
 
 export async function describeSandboxRuntimeRegistry(
@@ -496,15 +496,12 @@ function compareProviders(
 }
 
 function providerMatchReason(provider: SandboxRuntimeProviderConfig, selection: SandboxRuntimeSelection): string | undefined {
-  if (selection.tenantId && provider.allowedTenantIds && !provider.allowedTenantIds.includes(selection.tenantId)) {
-    return `tenant "${selection.tenantId}" is not allowed`;
-  }
-  if (selection.role && provider.allowedRoles && !provider.allowedRoles.includes(selection.role)) {
-    return `role "${selection.role}" is not allowed`;
-  }
-  if (selection.projectId && provider.allowedProjectIds && !provider.allowedProjectIds.includes(selection.projectId)) {
-    return `project "${selection.projectId}" is not allowed`;
-  }
+  const tenantReason = allowlistReason('tenant', selection.tenantId, provider.allowedTenantIds);
+  if (tenantReason) return tenantReason;
+  const roleReason = allowlistReason('role', selection.role, provider.allowedRoles);
+  if (roleReason) return roleReason;
+  const projectReason = allowlistReason('project', selection.projectId, provider.allowedProjectIds);
+  if (projectReason) return projectReason;
   const resource = selection.resource ?? selection.capability;
   if (resource && provider.resources && !provider.resources.includes(resource)) {
     return `resource "${resource}" is not allowed`;
@@ -513,6 +510,11 @@ function providerMatchReason(provider: SandboxRuntimeProviderConfig, selection: 
     return `capability "${selection.capability}" is not declared`;
   }
   return undefined;
+}
+
+function allowlistReason(kind: string, value: string | undefined, allowlist: string[] | undefined): string | undefined {
+  if (!value || !allowlist || allowlist.includes(value)) return undefined;
+  return `${kind} "${value}" is not allowed`;
 }
 
 export function createSandboxRuntime(

@@ -208,8 +208,10 @@ export type SandboxRuntimeProviderConfig = {
   allowedTenantIds?: string[];
   allowedRoles?: string[];
   allowedProjectIds?: string[];
+  // Resource allowlist is the control-plane policy dimension; capabilities are runtime-advertised features.
   resources?: string[];
   capabilities?: string[];
+  // Structured feature metadata for OpenSandbox-style orchestration UIs and schedulers.
   capabilityDeclarations?: Array<{
     name: string;
     kind?: 'execute' | 'shell' | 'file' | 'jupyter' | 'browser' | 'mcp' | 'agent';
@@ -218,6 +220,7 @@ export type SandboxRuntimeProviderConfig = {
     artifacts?: boolean;
     description?: string;
   }>;
+  // Provider-level orchestration posture; implementation can lag declaration per runtime adapter.
   orchestration?: {
     longTasks?: boolean;
     sessionReuse?: boolean;
