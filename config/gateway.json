@@ -92,10 +92,11 @@
     "channelBinding": true
   },
   "sandbox": {
-    "_comment": "Sandbox runtime for agent tool execution. runtime=docker uses the local Docker Engine API over dockerSocketPath for the sandbox.execute MVP; baseUrl/autoStart remain for AIOsandbox-style adapters.",
+    "_comment": "Sandbox runtime for agent tool execution. runtime=docker uses the local Docker Engine API over dockerSocketPath; runtime=aiosandbox|opensandbox|http calls baseUrl+executePath through the HTTP adapter.",
     "enabled": true,
     "runtime": "docker",
     "baseUrl": "http://localhost:8080",
+    "executePath": "/v1/sandbox/execute",
     "autoStart": true,
     "dockerSocketPath": "/var/run/docker.sock",
     "dockerApiVersion": "v1.41",
@@ -109,7 +110,15 @@
     "maxTimeoutMs": 60000,
     "memoryMb": 256,
     "maxMemoryMb": 512,
-    "networkAccess": false
+    "networkAccess": false,
+    "filesystemAccess": [],
+    "policy": {
+      "allowedCommands": ["echo", "cat", "ls", "pwd", "node", "python3", "bash", "sh"],
+      "allowedLanguages": ["python", "javascript", "bash"],
+      "maxTimeoutMs": 60000,
+      "maxMemoryMb": 512,
+      "allowNetworkAccess": false
+    }
   },
   "temporal": {
     "_comment": "Temporal REST API integration for durable workflows. Agents can call temporal.workflow.start|signal|query only when RBAC explicitly grants those tools. apiKeyEnv is read only by the gateway.",

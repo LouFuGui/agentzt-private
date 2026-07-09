@@ -181,6 +181,18 @@ export type TemporalConfig = {
   apiKeyEnv?: string;
 };
 
+export type SandboxCodeLanguage = 'python' | 'javascript' | 'bash';
+
+export type SandboxPolicyConfig = {
+  allowedRoles?: string[];
+  allowedProjectIds?: string[];
+  allowedCommands?: string[];
+  allowedLanguages?: SandboxCodeLanguage[];
+  maxTimeoutMs?: number;
+  maxMemoryMb?: number;
+  allowNetworkAccess?: boolean;
+};
+
 export type FalcoPriority =
   | 'emergency'
   | 'alert'
@@ -239,16 +251,19 @@ export type GatewayConfig = {
     enabled: boolean;
     baseUrl: string;
     autoStart: boolean;
-    runtime?: 'docker' | 'aiosandbox';
+    runtime?: 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+    executePath?: string;
     dockerSocketPath?: string;
     dockerApiVersion?: string;
     defaultImage?: string;
-    images?: Partial<Record<'python' | 'javascript' | 'bash', string>>;
+    images?: Partial<Record<SandboxCodeLanguage, string>>;
     timeoutMs?: number;
     maxTimeoutMs?: number;
     memoryMb?: number;
     maxMemoryMb?: number;
     networkAccess?: boolean;
+    filesystemAccess?: string[];
+    policy?: SandboxPolicyConfig;
   };
 };
 

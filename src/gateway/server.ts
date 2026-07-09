@@ -981,7 +981,13 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       }
     }
 
-    let result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid, credentials });
+    let result = await tool.run(args, {
+      agentId: claims.sub,
+      role: claims.role,
+      requestId: rid,
+      governance: claims.governance,
+      credentials,
+    });
 
     // Tool outputs are untrusted egress: redact credential-shaped strings before
     // they reach the agent (and could be fed back into a model prompt).
@@ -991,16 +997,23 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       result = r.value;
       outRedactions = r.count;
     }
+    const { auditMeta, ...wireResult } = result;
 
     const latencyMs = Date.now() - started;
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
-      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via, opa: opaClient ? { reason: opaDecision.reason } : undefined },
+      meta: {
+        ok: result.ok,
+        outputRedactions: outRedactions,
+        authVia: authz.via,
+        opa: opaClient ? { reason: opaDecision.reason } : undefined,
+        ...auditMeta,
+      },
     });
     log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
-    return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
+    return sendJson(res, wireResult.ok ? 200 : 400, wireResult, { [REQUEST_ID_HEADER]: rid });
   }
 
   // ============================================================================

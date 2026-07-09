@@ -457,8 +457,10 @@ async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: 
     agentId: `management:${auth.userId}`,
     role: auth.role,
     requestId: `management-sandbox-${Date.now()}`,
+    governance: typeof body['projectId'] === 'string' ? { projectId: body['projectId'] } : undefined,
   });
-  sendJson(res, result.ok ? 200 : 400, result);
+  const { auditMeta: _auditMeta, ...wireResult } = result;
+  sendJson(res, wireResult.ok ? 200 : 400, wireResult);
   return true;
 }
 

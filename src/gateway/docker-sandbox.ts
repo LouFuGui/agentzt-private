@@ -40,6 +40,7 @@ export type SandboxExecuteRequest =
 
 export type SandboxExecuteResult = {
   sandboxId: string;
+  runtime: string;
   mode: SandboxExecuteMode;
   language?: SandboxCodeLanguage;
   image: string;
@@ -124,6 +125,8 @@ export class DockerApiClient {
 }
 
 export class DockerSandboxRuntime {
+  readonly name = 'docker';
+
   private client: DockerApiClient;
   private config: Required<Omit<DockerSandboxConfig, 'images'>> & {
     images: Record<SandboxCodeLanguage, string>;
@@ -207,6 +210,7 @@ export class DockerSandboxRuntime {
 
       return {
         sandboxId,
+        runtime: this.name,
         mode: input.mode,
         language: input.mode === 'code' ? input.language : undefined,
         image,

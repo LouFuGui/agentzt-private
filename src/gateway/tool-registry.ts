@@ -4,15 +4,18 @@
 // so the demo is self-contained; in production these wrap real internal APIs.
 
 import { aiosandboxManager, AIOsandboxClient } from './aiosandbox.ts';
-import { DockerSandboxRuntime } from './docker-sandbox.ts';
+import { createSandboxRuntime } from './sandbox-runtime.ts';
 import { loadGatewayConfig } from '../shared/config.ts';
 import { TemporalClient } from './temporal-client.ts';
 import type { SandboxCodeLanguage, SandboxExecuteRequest } from './docker-sandbox.ts';
+import type { GovernanceBoundary, SandboxPolicyConfig } from '../shared/types.ts';
+import type { SandboxRuntime } from './sandbox-runtime.ts';
 
 export type ToolContext = {
   agentId: string;
   role: string;
   requestId: string;
+  governance?: GovernanceBoundary;
   credentials?: Record<string, string>;
 };
 
@@ -20,6 +23,7 @@ export type ToolResult = {
   ok: boolean;
   output?: unknown;
   error?: string;
+  auditMeta?: Record<string, unknown>;
 };
 
 export type ToolDef = {
@@ -124,7 +128,7 @@ function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteReques
 // ============== Sandbox tools (Docker MVP + AIOsandbox adapters) ==============
 
 let sandboxClient: AIOsandboxClient | undefined;
-let dockerSandboxRuntime: DockerSandboxRuntime | undefined;
+let sandboxRuntime: SandboxRuntime | undefined;
 
 async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOsandboxClient> {
   if (!sandboxClient) {
@@ -133,22 +137,63 @@ async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOs
   return sandboxClient;
 }
 
-function getDockerSandboxRuntime(): DockerSandboxRuntime {
-  if (!dockerSandboxRuntime) {
-    const cfg = loadGatewayConfig().sandbox;
-    dockerSandboxRuntime = new DockerSandboxRuntime({
-      socketPath: cfg?.dockerSocketPath,
-      apiVersion: cfg?.dockerApiVersion,
-      defaultImage: cfg?.defaultImage,
-      images: cfg?.images,
-      timeoutMs: cfg?.timeoutMs,
-      maxTimeoutMs: cfg?.maxTimeoutMs,
-      memoryMb: cfg?.memoryMb,
-      maxMemoryMb: cfg?.maxMemoryMb,
-      networkAccess: cfg?.networkAccess,
-    });
+function getSandboxRuntime(): SandboxRuntime {
+  if (!sandboxRuntime) {
+    sandboxRuntime = createSandboxRuntime(loadGatewayConfig().sandbox);
   }
-  return dockerSandboxRuntime;
+  return sandboxRuntime;
+}
+
+type SandboxPolicyDecision = {
+  allow: boolean;
+  reason: string;
+  meta: Record<string, unknown>;
+};
+
+function decideSandboxPolicy(
+  input: SandboxExecuteRequest,
+  ctx: ToolContext,
+  policy?: SandboxPolicyConfig,
+): SandboxPolicyDecision {
+  const meta: Record<string, unknown> = {
+    role: ctx.role,
+    projectId: ctx.governance?.projectId,
+    mode: input.mode,
+    language: input.mode === 'code' ? input.language : undefined,
+    requestedTimeoutMs: input.timeoutMs,
+    requestedMemoryMb: input.memoryMb,
+    requestedNetworkAccess: input.networkAccess ?? false,
+  };
+  if (!policy) return { allow: true, reason: 'sandbox policy allowed', meta };
+  if (policy.allowedRoles && !policy.allowedRoles.includes(ctx.role)) {
+    return { allow: false, reason: `role "${ctx.role}" is not allowed to execute sandbox workloads`, meta };
+  }
+  if (policy.allowedProjectIds) {
+    const projectId = ctx.governance?.projectId;
+    if (!projectId || !policy.allowedProjectIds.includes(projectId)) {
+      return { allow: false, reason: `project "${projectId ?? 'unknown'}" is not allowed to execute sandbox workloads`, meta };
+    }
+  }
+  if (input.mode === 'command' && policy.allowedCommands) {
+    const commandName = input.command.trim().split(/\s+/)[0] ?? '';
+    meta['commandName'] = commandName;
+    if (!policy.allowedCommands.includes(commandName)) {
+      return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };
+    }
+  }
+  if (input.mode === 'code' && policy.allowedLanguages && !policy.allowedLanguages.includes(input.language)) {
+    return { allow: false, reason: `language "${input.language}" is not allowed by sandbox policy`, meta };
+  }
+  if (input.timeoutMs !== undefined && policy.maxTimeoutMs !== undefined && input.timeoutMs > policy.maxTimeoutMs) {
+    return { allow: false, reason: `timeoutMs exceeds sandbox policy limit ${policy.maxTimeoutMs}`, meta };
+  }
+  if (input.memoryMb !== undefined && policy.maxMemoryMb !== undefined && input.memoryMb > policy.maxMemoryMb) {
+    return { allow: false, reason: `memoryMb exceeds sandbox policy limit ${policy.maxMemoryMb}`, meta };
+  }
+  if (input.networkAccess === true && policy.allowNetworkAccess !== true) {
+    return { allow: false, reason: 'network access is denied by sandbox policy', meta };
+  }
+  return { allow: true, reason: 'sandbox policy allowed', meta };
 }
 
 const SANDBOX_TOOLS: Record<string, ToolDef> = {
@@ -159,10 +204,22 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     run: async (a, ctx) => {
       const cfg = loadGatewayConfig().sandbox;
       if (cfg?.enabled === false) return { ok: false, error: 'sandbox runtime is disabled' };
-      if (cfg?.runtime && cfg.runtime !== 'docker') {
-        return { ok: false, error: `sandbox.execute requires docker runtime, got ${cfg.runtime}` };
+      const request = sandboxExecuteRequest(a);
+      const policyDecision = decideSandboxPolicy(request, ctx, cfg?.policy);
+      if (!policyDecision.allow) {
+        return {
+          ok: false,
+          error: policyDecision.reason,
+          auditMeta: {
+            sandbox: {
+              policyDecision: 'deny',
+              policyReason: policyDecision.reason,
+              policy: policyDecision.meta,
+            },
+          },
+        };
       }
-      const result = await getDockerSandboxRuntime().execute(sandboxExecuteRequest(a));
+      const result = await getSandboxRuntime().execute(request);
       return {
         ok: result.exitCode === 0 && !result.timedOut,
         output: {
@@ -173,6 +230,26 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
         error: result.exitCode === 0 && !result.timedOut
           ? undefined
           : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
+        auditMeta: {
+          sandbox: {
+            runtime: result.runtime,
+            sandboxId: result.sandboxId,
+            policyDecision: 'allow',
+            policyReason: policyDecision.reason,
+            policy: policyDecision.meta,
+            resourceLimits: {
+              timeoutMs: request.timeoutMs ?? cfg?.timeoutMs,
+              memoryMb: result.metrics.memoryLimitMb,
+            },
+            network: {
+              access: result.metrics.networkAccess,
+              defaultAccess: cfg?.networkAccess ?? false,
+            },
+            filesystem: {
+              access: cfg?.filesystemAccess ?? [],
+            },
+          },
+        },
       };
     },
   },

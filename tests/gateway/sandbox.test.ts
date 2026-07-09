@@ -20,6 +20,13 @@ type DockerCreateBody = {
 };
 type HttpRequest = Parameters<Parameters<typeof createServer>[0]>[0];
 
+type HttpSandboxRequest = {
+  mode: 'command' | 'code';
+  command?: string;
+  language?: string;
+  code?: string;
+};
+
 function makeRoot(): string {
   const root = join(tmpdir(), `agentzt-sandbox-${randomUUID()}`);
   roots.push(root);
@@ -100,6 +107,39 @@ async function makeDockerApi(): Promise<{
   };
 }
 
+async function makeHttpSandboxApi(): Promise<{
+  baseUrl: string;
+  close: () => Promise<void>;
+  requests: HttpSandboxRequest[];
+}> {
+  const requests: HttpSandboxRequest[] = [];
+  const server = createServer(async (req, res) => {
+    const raw = await readBody(req);
+    const body = raw ? JSON.parse(raw) as HttpSandboxRequest : { mode: 'command' as const };
+    requests.push(body);
+    if (req.method === 'POST' && req.url === '/v1/sandbox/execute') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        sandboxId: 'remote-1',
+        output: body.mode === 'code' ? `code:${body.language}` : `command:${body.command}`,
+        exitCode: 0,
+        metrics: { executionTime: 7, memoryLimitMb: 64, networkAccess: false },
+      }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end(`unexpected ${req.method} ${req.url}`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('http sandbox did not bind a TCP port');
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
 describe('sandbox runtime compatibility', () => {
   it('imports with Node native TypeScript stripping', () => {
     execFileSync(process.execPath, ['-e', "import('./src/gateway/sandbox.ts')"], {
@@ -151,6 +191,7 @@ describe('DockerSandboxRuntime', () => {
       const result = await runtime.execute({ mode: 'command', command: 'echo ok', memoryMb: 256 });
 
       expect(result).toMatchObject({
+        runtime: 'docker',
         mode: 'command',
         image: 'alpine:test',
         command: ['sh', '-c', 'echo ok'],
@@ -169,6 +210,43 @@ describe('DockerSandboxRuntime', () => {
       expect(create.HostConfig).toMatchObject({ NetworkMode: 'none', Memory: 256 * 1024 * 1024 });
     } finally {
       await docker.close();
+    }
+  });
+
+  it('executes through the generic HTTP sandbox runtime adapter', async () => {
+    const httpSandbox = await makeHttpSandboxApi();
+    try {
+      const { HttpSandboxRuntime } = await import('../../src/gateway/sandbox-runtime.ts');
+      const runtime = new HttpSandboxRuntime({
+        name: 'opensandbox',
+        baseUrl: httpSandbox.baseUrl,
+        timeoutMs: 1000,
+      });
+
+      const result = await runtime.execute({
+        mode: 'code',
+        language: 'python',
+        code: 'print("ok")',
+        memoryMb: 64,
+      });
+
+      expect(result).toMatchObject({
+        sandboxId: 'remote-1',
+        runtime: 'opensandbox',
+        mode: 'code',
+        language: 'python',
+        exitCode: 0,
+        output: 'code:python',
+        metrics: { executionTime: 7, memoryLimitMb: 64, networkAccess: false },
+      });
+      expect(httpSandbox.requests).toEqual([{
+        mode: 'code',
+        language: 'python',
+        code: 'print("ok")',
+        memoryMb: 64,
+      }]);
+    } finally {
+      await httpSandbox.close();
     }
   });
 });
@@ -221,6 +299,15 @@ describe('sandbox.execute gateway tool', () => {
           memoryMb: 64,
           maxMemoryMb: 128,
           networkAccess: false,
+          filesystemAccess: [],
+          policy: {
+            allowedProjectIds: ['agentzt'],
+            allowedCommands: ['echo'],
+            allowedLanguages: ['python', 'javascript', 'bash'],
+            maxTimeoutMs: 1000,
+            maxMemoryMb: 128,
+            allowNetworkAccess: false,
+          },
         },
       });
       writeJsonFile(join(root, 'config', 'policy.json'), {
@@ -240,6 +327,7 @@ describe('sandbox.execute gateway tool', () => {
           role,
           publicKeyJwk: keys.publicKeyJwk,
           status: 'active',
+          governance: { projectId: 'agentzt' },
         }],
       });
 
@@ -285,10 +373,87 @@ describe('sandbox.execute gateway tool', () => {
           .map((line) => JSON.parse(line) as { action: string; resource: string; decision: string; meta?: Record<string, unknown> });
         const event = audit.find((e) => e.action === 'tool.call' && e.resource === 'sandbox.execute');
         expect(event).toMatchObject({ decision: 'allow' });
-        expect(event?.meta).toMatchObject({ ok: true, authVia: 'scope' });
+        expect(event?.meta).toMatchObject({
+          ok: true,
+          authVia: 'scope',
+          sandbox: {
+            runtime: 'docker',
+            sandboxId: expect.any(String),
+            policyDecision: 'allow',
+            resourceLimits: { memoryMb: 128 },
+            network: { access: false },
+            filesystem: { access: [] },
+          },
+        });
       } finally {
         await new Promise<void>((resolve) => gateway.server.close(() => resolve()));
       }
+    } finally {
+      await docker.close();
+    }
+  });
+
+  it('denies sandbox.execute when command policy rejects the workload', async () => {
+    const docker = await makeDockerApi();
+    const root = makeRoot();
+    mkdirSync(join(root, 'config'), { recursive: true });
+    process.env.AGENTZT_ROOT = root;
+    vi.resetModules();
+
+    try {
+      writeJsonFile(join(root, 'config', 'gateway.json'), {
+        port: 0,
+        issuer: 'agentzt-gateway',
+        tokenTtlSeconds: 300,
+        assertionMaxAgeSeconds: 60,
+        upstream: {
+          mode: 'mock',
+          anthropicBaseUrl: 'https://api.anthropic.com',
+          apiKeyEnv: 'AGENTZT_UPSTREAM_ANTHROPIC_KEY',
+        },
+        guardrails: {
+          provider: 'local',
+          input: { mode: 'off' },
+          output: { redactSecrets: false, check: false },
+          openguardrails: {
+            baseUrl: 'https://api.openguardrails.com/v1',
+            apiKeyEnv: 'OPENGUARDRAILS_API_KEY',
+            model: 'OpenGuardrails-Text',
+            timeoutMs: 5000,
+            failOpen: false,
+          },
+        },
+        sandbox: {
+          enabled: true,
+          runtime: 'docker',
+          dockerSocketPath: docker.socketPath,
+          defaultImage: 'alpine:test',
+          policy: {
+            allowedCommands: ['echo'],
+            allowNetworkAccess: false,
+          },
+        },
+      });
+      const { getTool } = await import('../../src/gateway/tool-registry.ts');
+      const tool = getTool('sandbox.execute');
+      if (!tool) throw new Error('sandbox.execute not found');
+
+      const result = await tool.run(
+        { command: 'rm -rf /workspace' },
+        { agentId: 'agent-01', role: 'sandbox-role', requestId: 'req-01' },
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: 'command "rm" is not allowed by sandbox policy',
+        auditMeta: {
+          sandbox: {
+            policyDecision: 'deny',
+            policy: { commandName: 'rm' },
+          },
+        },
+      });
+      expect(docker.requests).toHaveLength(0);
     } finally {
       await docker.close();
     }
