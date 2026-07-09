@@ -408,24 +408,33 @@ describe('DockerSandboxRuntime', () => {
     };
     const low = await makeProvider('low');
     const high = await makeProvider('high');
-    const { createSandboxRuntime } = await import('../../src/gateway/sandbox-runtime.ts');
+    const { createSandboxRuntime, describeSandboxRuntimeRegistry } = await import('../../src/gateway/sandbox-runtime.ts');
     try {
-      const runtime = createSandboxRuntime({
+      const cfg = {
         enabled: true,
-        runtime: 'http',
+        runtime: 'http' as const,
         baseUrl: low.baseUrl,
         autoStart: false,
         runtimes: [
-          { name: 'low', type: 'http', enabled: true, baseUrl: low.baseUrl, capacity: 1, allowedProjectIds: ['agentzt'] },
-          { name: 'high', type: 'http', enabled: true, baseUrl: high.baseUrl, capacity: 10, allowedProjectIds: ['agentzt'] },
-          { name: 'other-project', type: 'http', enabled: true, baseUrl: low.baseUrl, capacity: 99, allowedProjectIds: ['payments'] },
+          { name: 'low', type: 'http' as const, enabled: true, baseUrl: low.baseUrl, capacity: 1, allowedProjectIds: ['agentzt'] },
+          { name: 'high', type: 'http' as const, enabled: true, baseUrl: high.baseUrl, capacity: 10, allowedProjectIds: ['agentzt'] },
+          { name: 'other-project', type: 'http' as const, enabled: true, baseUrl: low.baseUrl, capacity: 99, allowedProjectIds: ['payments'] },
         ],
-      }, { projectId: 'agentzt', capability: 'sandbox.execute' });
+      };
+      const selection = { projectId: 'agentzt', capability: 'sandbox.execute' };
+      const registry = await describeSandboxRuntimeRegistry(cfg, selection);
+      const runtime = createSandboxRuntime(cfg, selection);
 
       const result = await runtime.execute({ mode: 'command', command: 'echo selected' });
 
+      expect(registry.runtimes).toEqual([
+        expect.objectContaining({ name: 'low', eligible: true, selected: false }),
+        expect.objectContaining({ name: 'high', eligible: true, selected: true }),
+        expect.objectContaining({ name: 'other-project', eligible: false, selected: false, reason: 'project "agentzt" is not allowed' }),
+      ]);
       expect(result.sandboxId).toBe('high');
-      expect(hits).toEqual(['high']);
+      // The selected provider is contacted once for registry health and once for execution.
+      expect(hits).toEqual(['high', 'high']);
     } finally {
       low.close();
       high.close();
@@ -507,6 +516,7 @@ describe('DockerSandboxRuntime', () => {
         expect.objectContaining({ name: 'enterprise', eligible: true, selected: true }),
       ]);
       expect(result.sandboxId).toBe('enterprise');
+      // The selected provider is contacted once for registry health and once for execution.
       expect(hits).toEqual(['enterprise', 'enterprise']);
     } finally {
       defaultProvider.close();
