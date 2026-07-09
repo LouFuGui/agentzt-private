@@ -134,3 +134,4 @@
 - 当前引导重点应从“AgentZT 如何把沙盒运行时纳入零信任控制面”继续收敛，包括沙盒接入位置、运行时抽象、权限模型、审计范围、网络/文件系统隔离、工具执行策略与首个可交付闭环。
 - 用户确认第二版首阶段先做“5 + 1”：先接入现有 Docker 沙盒 runtime，跑通“创建沙盒 → 执行命令/代码 → 返回结果 → 审计”的最小闭环，同时优先覆盖 Agent 工具执行沙盒；之后再扩展到更全面的 Agent 运行沙盒和企业沙盒编排平台。
 - 用户说明当前使用 AIOsandbox 和 opensandbox，并确认沙盒 runtime 接入方式应优先按 HTTP API 服务理解：AgentZT Gateway 通过 REST/HTTP adapter 调用外部沙盒服务，而不是直接 shell out 到 Docker CLI 或引入运行时依赖。
+- 用户确认首版工具执行沙盒接口选择统一 `sandbox.execute`：同一接口内支持 `command` 与 `code` 两种最小执行请求，后续再扩展文件上传、长任务、会话复用等能力。
