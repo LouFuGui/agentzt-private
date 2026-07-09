@@ -18,6 +18,7 @@ type DockerCreateBody = {
     Memory: number;
   };
 };
+type HttpRequest = Parameters<Parameters<typeof createServer>[0]>[0];
 
 function makeRoot(): string {
   const root = join(tmpdir(), `agentzt-sandbox-${randomUUID()}`);
@@ -40,7 +41,7 @@ function listen(server: Server, socketPath: string): Promise<void> {
   return new Promise((resolve) => server.listen(socketPath, () => resolve()));
 }
 
-function readBody(req: Parameters<Parameters<typeof createServer>[0]>[0]): Promise<string> {
+function readBody(req: HttpRequest): Promise<string> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -77,9 +78,9 @@ async function makeDockerApi(): Promise<{
       return;
     }
     if (req.method === 'GET' && req.url === '/v1.41/containers/container-1/logs?stdout=true&stderr=true') {
-      const create = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
+      const createBody = requests.find((r) => r.url === '/v1.41/containers/create')?.body as DockerCreateBody | undefined;
       res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end(`ran:${create?.Cmd.join(' ') ?? ''}`);
+      res.end(`ran:${createBody?.Cmd.join(' ') ?? ''}`);
       return;
     }
     if (req.method === 'DELETE' && req.url === '/v1.41/containers/container-1?force=true&v=true') {

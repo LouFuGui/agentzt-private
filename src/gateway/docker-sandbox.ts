@@ -103,7 +103,7 @@ export class DockerApiClient {
             return;
           }
           if (!text) {
-            resolve(undefined as T);
+            resolve({} as T);
             return;
           }
           const contentType = String(res.headers['content-type'] ?? '');
@@ -161,7 +161,7 @@ export class DockerSandboxRuntime {
       const created = await this.client.request<DockerCreateResponse>('POST', '/containers/create', {
         Image: image,
         Cmd: cmd,
-        Tty: true,
+        Tty: false,
         AttachStdout: true,
         AttachStderr: true,
         Labels: {
