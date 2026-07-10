@@ -196,3 +196,13 @@
   - 管理 API `/api/v1/sandbox/runtimes` 支持通过 query 传入 `tenantId`、`role`、`projectId`、`resource/capability` 查看过滤后的 registry 决策，返回 selected provider、eligible/reason、health 与调度策略。
   - runtime registry 配置增加 OpenSandbox 式能力声明：长任务、会话复用、文件工件、浏览器、Jupyter、MCP 等作为 provider capability/orchestration metadata 暴露，先完成控制面声明与选择，不声称已经实现所有 runtime 能力。
 - 下一步建议进入真正 stateful 编排：健康快照缓存、provider failure counter、sessionId 到 sandbox/container 绑定、长任务状态机、artifact 元数据与 TTL 清理。
+
+### Web 控制台沙盒攻防演示增强
+
+- 用户提出需要“更完整 Web UI”，并且最终要能演示沙盒作用：未加沙盒前受到攻击是什么样，加沙盒后受到攻击是什么样。
+- 本轮在现有无依赖、无构建步骤的 Web Console 中新增 Sandbox Demo 页签：
+  - 左侧以安全模拟方式展示未沙盒化工具路径遇到攻击时的影响，不在宿主机真实执行危险命令。
+  - 右侧将同一攻击 payload 送入管理调试入口 `/api/v1/sandbox/execute`，展示 AgentZT sandbox policy、默认禁网、资源限制、runtime 输出与失败/阻断结果。
+  - 页面同时展示 `/api/v1/sandbox/runtimes` 返回的 runtime posture，便于讲解 Docker/AIOsandbox/OpenSandbox provider 选择、health、capability 与默认隔离策略。
+  - 演示场景首批覆盖 secret exfiltration、destructive filesystem command、unexpected network callback，并保留 safe workload 按钮用于确认沙盒正常执行路径。
+- 新增 console 静态测试契约，保护 Sandbox Demo 页签、sandbox API 调用、unsafe simulation 文案和样式入口。
