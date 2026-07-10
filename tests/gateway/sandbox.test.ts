@@ -44,9 +44,20 @@ function makeRoot(): string {
   return root;
 }
 
+function removeRoot(root: string): void {
+  // Windows file-system or AV may briefly hold handles after server close,
+  // causing EPERM on rmSync. Retry a few times before giving up.
+  rmSync(root, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 10 : 0,
+    retryDelay: 100,
+  });
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
+    removeRoot(root);
   }
 });
 
