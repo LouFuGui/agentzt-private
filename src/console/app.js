@@ -10,6 +10,7 @@ const logout = document.querySelector('#logout');
 const sandboxForm = document.querySelector('#sandbox-demo-form');
 const attackScenario = document.querySelector('#attack-scenario');
 
+// Demo payloads are intentionally fictional; the "before sandbox" path only renders impact text.
 const sandboxDemoScenarios = {
   exfiltrate: {
     title: 'Secret exfiltration command',
