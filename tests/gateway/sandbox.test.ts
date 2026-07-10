@@ -66,13 +66,17 @@ function readBody(req: HttpRequest): Promise<string> {
   });
 }
 
+function makeDockerSocketPath(): string {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\agentzt-sandbox-${randomUUID()}`;
+  return join(makeRoot(), 'docker.sock');
+}
+
 async function makeDockerApi(): Promise<{
   socketPath: string;
   close: () => Promise<void>;
   requests: Array<{ method?: string; url?: string; body?: unknown }>;
 }> {
-  const root = makeRoot();
-  const socketPath = join(root, 'docker.sock');
+  const socketPath = makeDockerSocketPath();
   const requests: Array<{ method?: string; url?: string; body?: unknown }> = [];
   let createRequest: DockerCreateBody | undefined;
   const server = createServer(async (req, res) => {
