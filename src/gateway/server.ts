@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { TLSSocket } from 'node:tls';
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import {
@@ -43,6 +44,9 @@ import { TokenService } from './token-service.ts';
 import { RateLimiter } from './rate-limiter.ts';
 import { callModel } from './upstream.ts';
 import { getTool } from './tool-registry.ts';
+import { createSandboxRuntime } from './sandbox-runtime.ts';
+import type { SandboxRuntime } from './sandbox-runtime.ts';
+import type { SandboxExecuteRequest } from './docker-sandbox.ts';
 import { flattenMessages, redactSecretsDeep } from './guardrails.ts';
 import { createGuardrailProvider } from './guardrail-providers.ts';
 import { OpaClient, resolveOpaConfig } from './opa-client.ts';
@@ -72,11 +76,113 @@ import { recordAuditWithTelemetry, resolveSignozConfig, SigNozTelemetry } from '
 import type { AuditEvent } from '../shared/types.ts';
 
 const RISK_LEVELS = ['no_risk', 'low_risk', 'medium_risk', 'high_risk', 'unknown'] as const;
+const MAX_VALIDATION_SNIPPETS = 3;
+const MAX_HEREDOC_RETRIES = 10;
+const DEFAULT_SANDBOX_HIGH_RISK_PATTERNS = ['\\brm\\s+-rf', '\\bcurl\\s+', '\\bwget\\s+', '\\bchmod\\s+', '\\bssh\\s+', '\\bscp\\s+'];
+const highRiskPatternCache = new Map<string, RegExp[]>();
 
 function parseRiskLevel(value: unknown): RiskLevel | undefined {
   return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
     ? value as RiskLevel
     : undefined;
+}
+
+type SandboxValidationFinding = {
+  stage: 'input' | 'output';
+  kind: 'bash' | 'python' | 'javascript';
+  exitCode: number;
+  output: string;
+};
+
+function extractSandboxValidationRequests(
+  text: string,
+  highRiskPatterns: string[] = DEFAULT_SANDBOX_HIGH_RISK_PATTERNS,
+): Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> {
+  const findings: Array<{ kind: 'bash' | 'python' | 'javascript'; code: string }> = [];
+  const fence = /```(bash|sh|shell|python|py|javascript|js)\s*\n([\s\S]*?)```/gi;
+  for (const match of text.matchAll(fence)) {
+    const language = (match[1] ?? '').toLowerCase();
+    const kind = language === 'python' || language === 'py'
+      ? 'python'
+      : language === 'javascript' || language === 'js'
+        ? 'javascript'
+        : 'bash';
+    findings.push({ kind, code: match[2] ?? '' });
+  }
+  const highRiskRegexes = compiledHighRiskPatterns(highRiskPatterns);
+  if (findings.length === 0 && highRiskRegexes.some((pattern) => pattern.test(text))) {
+    findings.push({ kind: 'bash', code: text });
+  }
+
+  return findings.slice(0, MAX_VALIDATION_SNIPPETS);
+}
+
+function compiledHighRiskPatterns(patterns: string[]): RegExp[] {
+  const key = patterns.join('\n');
+  const cached = highRiskPatternCache.get(key);
+  if (cached) return cached;
+  const compiled = patterns.map((pattern) => new RegExp(pattern, 'i'));
+  highRiskPatternCache.set(key, compiled);
+  return compiled;
+}
+
+function generateHeredocMarker(): string {
+  return `AGENTZT_${randomUUID().replace(/-/g, '_')}`;
+}
+
+function validationCommand(kind: 'bash' | 'python' | 'javascript', code: string): SandboxExecuteRequest {
+  let heredocMarker = generateHeredocMarker();
+  for (let attempts = 0; code.includes(heredocMarker); attempts++) {
+    if (attempts >= MAX_HEREDOC_RETRIES) throw new Error('unable to create unique sandbox validation marker');
+    heredocMarker = generateHeredocMarker();
+  }
+  const file = kind === 'python' ? '/tmp/agentzt-validate.py'
+    : kind === 'javascript' ? '/tmp/agentzt-validate.js'
+      : '/tmp/agentzt-validate.sh';
+  const tool = kind === 'python' ? `python3 -m py_compile ${file}`
+    : kind === 'javascript' ? `node --check ${file}`
+      : `sh -n ${file}`;
+  return {
+    mode: 'command',
+    command: `cat > ${file} <<'${heredocMarker}'\n${code}\n${heredocMarker}\n${tool}`,
+  };
+}
+
+async function runSandboxValidation(
+  runtime: SandboxRuntime | undefined,
+  cfg: GatewayConfig,
+  stage: 'input' | 'output',
+  text: string,
+): Promise<{ allow: boolean; findings: SandboxValidationFinding[]; reason?: string }> {
+  if (!runtime || cfg.sandbox?.enabled === false || cfg.sandbox?.modelValidation?.enabled !== true) {
+    return { allow: true, findings: [] };
+  }
+  const requests = extractSandboxValidationRequests(text, cfg.sandbox?.modelValidation?.highRiskPatterns);
+  if (requests.length === 0) return { allow: true, findings: [] };
+  const validation = cfg.sandbox.modelValidation;
+  const findings: SandboxValidationFinding[] = [];
+  for (const request of requests) {
+    const result = await runtime.execute({
+      ...validationCommand(request.kind, request.code),
+      timeoutMs: validation.timeoutMs ?? 5000,
+      memoryMb: validation.memoryMb ?? 64,
+      networkAccess: validation.networkAccess ?? false,
+    });
+    findings.push({
+      stage,
+      kind: request.kind,
+      exitCode: result.exitCode,
+      output: result.output,
+    });
+    if (result.exitCode !== 0 || result.timedOut) {
+      return {
+        allow: false,
+        findings,
+        reason: `${stage} sandbox validation failed for ${request.kind}`,
+      };
+    }
+  }
+  return { allow: true, findings };
 }
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
@@ -136,6 +242,9 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   const signozConfig = resolveSignozConfig(cfg.signoz);
   const telemetry = signozConfig ? new SigNozTelemetry(signozConfig, log) : null;
   const falco = createFalcoMonitor(cfg.falco);
+  const modelSandboxRuntime = cfg.sandbox?.enabled !== false && cfg.sandbox?.modelValidation?.enabled === true
+    ? createSandboxRuntime(cfg.sandbox)
+    : undefined;
   const tls = resolveTls(cfg);
 
   log.info(`loaded ${identities.size()} registered agent identit(ies)`);
@@ -145,6 +254,7 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
   if (signozConfig) log.info(`SigNoz telemetry: ON (endpoint=${signozConfig.endpoint}, service=${signozConfig.serviceName})`);
   if (falco) log.info(`Falco runtime policy: ON (webhook=${falco.config.webhookPath}, minimum=${falco.config.minimumPriority})`);
   if (vault) log.info(`Vault secrets: ON (address=${vault.server.address}, failOpen=${vault.failOpen ?? false})`);
+  if (modelSandboxRuntime) log.info(`model sandbox validation: ON (runtime=${modelSandboxRuntime.name})`);
   if (tls) log.info(`mutual TLS: ON (client certs required${tls.channelBinding ? ', channel binding' : ''})`);
 
   // User management API - reuses the gateway's own signing key for session tokens.
@@ -820,6 +930,17 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         return sendError(res, 403, 'guardrail_blocked', reason);
       }
     }
+    const inputSandboxValidation = await runSandboxValidation(modelSandboxRuntime, cfg, 'input', messages.map((m) => m.content).join('\n'));
+    if (!inputSandboxValidation.allow) {
+      const reason = inputSandboxValidation.reason ?? 'input sandbox validation failed';
+      recordAudit({
+        requestId: rid, agentId: claims.sub, role: claims.role,
+        action: 'sandbox.validate', resource: model, decision: 'deny', reason,
+        meta: { stage: 'input', findings: inputSandboxValidation.findings },
+      });
+      log.deny(`sandbox.validate ${claims.sub} -> ${model}: ${reason}`);
+      return sendError(res, 403, 'sandbox_validation_failed', reason);
+    }
 
     // --- ABAC: context-aware authorization (operating hours + risk-adaptive) --
     const riskLevelForAbac = inputVerdict?.riskLevel as RiskLevel | undefined;
@@ -868,6 +989,13 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         outRedactions = r.count;
       }
     }
+    const outputSandboxValidation = result.status === 200
+      ? await runSandboxValidation(modelSandboxRuntime, cfg, 'output', extractText(result.body))
+      : { allow: true, findings: [] };
+    if (!outputSandboxValidation.allow) {
+      // Preserve response shape while withholding code/commands that failed sandbox validation.
+      replaceText(result.body, '[response withheld by sandbox validation]');
+    }
 
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
@@ -882,6 +1010,8 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
         guardrailProvider: guard.name,
         inputVerdict,
         outputVerdict,
+        inputSandboxValidation: inputSandboxValidation.findings,
+        outputSandboxValidation: outputSandboxValidation.findings,
         outputRedactions: outRedactions,
         opa: opaClient ? { reason: opaDecision.reason } : undefined,
       },
@@ -981,7 +1111,13 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       }
     }
 
-    let result = await tool.run(args, { agentId: claims.sub, role: claims.role, requestId: rid, credentials });
+    let result = await tool.run(args, {
+      agentId: claims.sub,
+      role: claims.role,
+      requestId: rid,
+      governance: claims.governance,
+      credentials,
+    });
 
     // Tool outputs are untrusted egress: redact credential-shaped strings before
     // they reach the agent (and could be fed back into a model prompt).
@@ -991,16 +1127,23 @@ export async function createGatewayServer(): Promise<{ server: Server; port: num
       result = r.value;
       outRedactions = r.count;
     }
+    const { auditMeta, ...wireResult } = result;
 
     const latencyMs = Date.now() - started;
     recordAudit({
       requestId: rid, agentId: claims.sub, role: claims.role,
       action: 'tool.call', resource: name, decision: 'allow',
       reason: decision.reason, latencyMs,
-      meta: { ok: result.ok, outputRedactions: outRedactions, authVia: authz.via, opa: opaClient ? { reason: opaDecision.reason } : undefined },
+      meta: {
+        ok: result.ok,
+        outputRedactions: outRedactions,
+        authVia: authz.via,
+        opa: opaClient ? { reason: opaDecision.reason } : undefined,
+        ...auditMeta,
+      },
     });
     log.allow(`tool.call ${claims.sub} -> ${name} (${latencyMs}ms, via=${authz.via})${outRedactions ? ` redacted:${outRedactions}` : ''}`);
-    return sendJson(res, result.ok ? 200 : 400, result, { [REQUEST_ID_HEADER]: rid });
+    return sendJson(res, wireResult.ok ? 200 : 400, wireResult, { [REQUEST_ID_HEADER]: rid });
   }
 
   // ============================================================================

@@ -181,6 +181,66 @@ export type TemporalConfig = {
   apiKeyEnv?: string;
 };
 
+export type SandboxCodeLanguage = 'python' | 'javascript' | 'bash';
+
+export type SandboxPolicyConfig = {
+  allowedRoles?: string[];
+  allowedProjectIds?: string[];
+  allowedCommands?: string[];
+  allowedLanguages?: SandboxCodeLanguage[];
+  maxTimeoutMs?: number;
+  maxMemoryMb?: number;
+  allowNetworkAccess?: boolean;
+};
+
+export type SandboxRuntimeProviderConfig = {
+  name: string;
+  type: 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+  baseUrl?: string;
+  healthPath?: string;
+  executePath?: string;
+  agentPath?: string;
+  apiKeyEnv?: string;
+  enabled?: boolean;
+  capacity?: number;
+  priority?: number;
+  defaultImage?: string;
+  allowedTenantIds?: string[];
+  allowedRoles?: string[];
+  allowedProjectIds?: string[];
+  // Resource allowlist is the control-plane policy dimension; capabilities are runtime-advertised features.
+  resources?: string[];
+  capabilities?: string[];
+  // Structured feature metadata for OpenSandbox-style orchestration UIs and schedulers.
+  capabilityDeclarations?: Array<{
+    name: string;
+    kind?: 'execute' | 'shell' | 'file' | 'jupyter' | 'browser' | 'mcp' | 'agent';
+    longTasks?: boolean;
+    sessionReuse?: boolean;
+    artifacts?: boolean;
+    description?: string;
+  }>;
+  // Provider-level orchestration posture; implementation can lag declaration per runtime adapter.
+  orchestration?: {
+    longTasks?: boolean;
+    sessionReuse?: boolean;
+    artifacts?: boolean;
+    browser?: boolean;
+    jupyter?: boolean;
+    mcp?: boolean;
+    maxTaskDurationMs?: number;
+    maxIdleMs?: number;
+  };
+  networkPolicy?: {
+    defaultAccess?: boolean;
+    egress?: string[];
+  };
+  filesystemPolicy?: {
+    mounts?: string[];
+    readonly?: boolean;
+  };
+};
+
 export type FalcoPriority =
   | 'emergency'
   | 'alert'
@@ -239,6 +299,33 @@ export type GatewayConfig = {
     enabled: boolean;
     baseUrl: string;
     autoStart: boolean;
+    runtime?: 'docker' | 'aiosandbox' | 'opensandbox' | 'http';
+    healthPath?: string;
+    executePath?: string;
+    agentPath?: string;
+    dockerSocketPath?: string;
+    dockerApiVersion?: string;
+    defaultImage?: string;
+    images?: Partial<Record<SandboxCodeLanguage, string>>;
+    timeoutMs?: number;
+    maxTimeoutMs?: number;
+    memoryMb?: number;
+    maxMemoryMb?: number;
+    networkAccess?: boolean;
+    filesystemAccess?: string[];
+    policy?: SandboxPolicyConfig;
+    scheduling?: {
+      policy?: 'capacity' | 'priority';
+    };
+    runtimes?: SandboxRuntimeProviderConfig[];
+    modelValidation?: {
+      enabled?: boolean;
+      highRiskOnly?: boolean;
+      timeoutMs?: number;
+      memoryMb?: number;
+      networkAccess?: boolean;
+      highRiskPatterns?: string[];
+    };
   };
 };
 
@@ -306,7 +393,13 @@ export type AuditAction =
   | 'direct.call'
   | 'quota.exceeded'
   | 'falco.event'
-  | 'falco.block';
+  | 'falco.block'
+  | 'sandbox.create'
+  | 'sandbox.start'
+  | 'sandbox.exec'
+  | 'sandbox.stop'
+  | 'sandbox.destroy'
+  | 'sandbox.validate';
 
 export type AuditEvent = {
   ts: string;

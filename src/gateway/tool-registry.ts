@@ -4,13 +4,18 @@
 // so the demo is self-contained; in production these wrap real internal APIs.
 
 import { aiosandboxManager, AIOsandboxClient } from './aiosandbox.ts';
+import { createSandboxRuntime } from './sandbox-runtime.ts';
 import { loadGatewayConfig } from '../shared/config.ts';
 import { TemporalClient } from './temporal-client.ts';
+import type { SandboxCodeLanguage, SandboxExecuteRequest } from './docker-sandbox.ts';
+import type { GovernanceBoundary, SandboxPolicyConfig } from '../shared/types.ts';
+import type { SandboxRuntime } from './sandbox-runtime.ts';
 
 export type ToolContext = {
   agentId: string;
   role: string;
   requestId: string;
+  governance?: GovernanceBoundary;
   credentials?: Record<string, string>;
 };
 
@@ -18,6 +23,7 @@ export type ToolResult = {
   ok: boolean;
   output?: unknown;
   error?: string;
+  auditMeta?: Record<string, unknown>;
 };
 
 export type ToolDef = {
@@ -26,6 +32,11 @@ export type ToolDef = {
   validate: (args: Record<string, unknown>) => string | null; // null = valid
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
+
+const SANDBOX_COMMAND_MAX_CHARS = 8192;
+const SANDBOX_CODE_MAX_CHARS = 128 * 1024;
+const SANDBOX_TIMEOUT_MAX_MS = 60000;
+const SANDBOX_MEMORY_MAX_MB = 512;
 
 function validateStringParameter(v: unknown, key: string, max: number): string | null {
   if (typeof v !== 'string') return `parameter "${key}" must be a string`;
@@ -61,9 +72,71 @@ function optionalJson(args: Record<string, unknown>, key: string, max = 128 * 10
   return null;
 }
 
-// ============== AIOsandbox 工具 ==============
+function optionalBoolean(args: Record<string, unknown>, key: string): string | null {
+  const v = args[key];
+  if (v === undefined) return null;
+  return typeof v === 'boolean' ? null : `parameter "${key}" must be a boolean`;
+}
+
+function optionalPositiveInteger(args: Record<string, unknown>, key: string, max: number): string | null {
+  const v = args[key];
+  if (v === undefined) return null;
+  if (!Number.isInteger(v) || Number(v) <= 0) return `parameter "${key}" must be a positive integer`;
+  if (Number(v) > max) return `parameter "${key}" exceeds ${max}`;
+  return null;
+}
+
+function extractCommandName(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) return '';
+  return /^(\S+)/.exec(trimmed)?.[1] ?? '';
+}
+
+function validateSandboxExecute(a: Record<string, unknown>): string | null {
+  const mode = a['mode'] ?? (a['command'] !== undefined ? 'command' : 'code');
+  if (mode !== 'command' && mode !== 'code') return 'parameter "mode" must be "command" or "code"';
+  if (mode === 'command') {
+    const err = requireString(a, 'command', SANDBOX_COMMAND_MAX_CHARS);
+    if (err) return err;
+    if (!extractCommandName(String(a['command']))) return 'parameter "command" must include an executable name';
+    if (a['code'] !== undefined) return 'command execution must not include "code"';
+  } else {
+    const codeErr = requireString(a, 'code', SANDBOX_CODE_MAX_CHARS);
+    if (codeErr) return codeErr;
+    const lang = a['language'];
+    if (lang !== 'python' && lang !== 'javascript' && lang !== 'bash') {
+      return 'parameter "language" must be one of: python, javascript, bash';
+    }
+    if (a['command'] !== undefined) return 'code execution must not include "command"';
+  }
+  return optionalPositiveInteger(a, 'timeoutMs', SANDBOX_TIMEOUT_MAX_MS)
+    ?? optionalPositiveInteger(a, 'memoryMb', SANDBOX_MEMORY_MAX_MB)
+    ?? optionalBoolean(a, 'networkAccess');
+}
+
+function sandboxExecuteRequest(a: Record<string, unknown>): SandboxExecuteRequest {
+  const common = {
+    timeoutMs: a['timeoutMs'] as number | undefined,
+    memoryMb: a['memoryMb'] as number | undefined,
+    networkAccess: a['networkAccess'] as boolean | undefined,
+  };
+  const mode = a['mode'] ?? (a['command'] !== undefined ? 'command' : 'code');
+  if (mode === 'command') {
+    return { ...common, mode: 'command', command: String(a['command']) };
+  }
+  return {
+    ...common,
+    mode: 'code',
+    language: a['language'] as SandboxCodeLanguage,
+    code: String(a['code']),
+  };
+}
+
+// ============== Sandbox tools (Docker + HTTP runtime adapters) ==============
 
 let sandboxClient: AIOsandboxClient | undefined;
+let sandboxRuntime: SandboxRuntime | undefined;
+let sandboxRuntimeKey: string | undefined;
 
 async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOsandboxClient> {
   if (!sandboxClient) {
@@ -72,18 +145,170 @@ async function getSandboxClient(baseUrl = 'http://localhost:8080'): Promise<AIOs
   return sandboxClient;
 }
 
+function getSandboxRuntime(ctx: ToolContext, capability = 'sandbox.execute'): SandboxRuntime {
+  const cfg = loadGatewayConfig().sandbox;
+  const key = [
+    cfg?.runtime ?? 'docker',
+    cfg?.baseUrl ?? '',
+    ctx.role,
+    ctx.governance?.projectId ?? '',
+    capability,
+  ].join('|');
+  if (!sandboxRuntime || sandboxRuntimeKey !== key) {
+    sandboxRuntime = createSandboxRuntime(cfg, {
+      role: ctx.role,
+      projectId: ctx.governance?.projectId,
+      resource: capability,
+      capability,
+    });
+    sandboxRuntimeKey = key;
+  }
+  return sandboxRuntime;
+}
+
+type SandboxPolicyDecision = {
+  allow: boolean;
+  reason: string;
+  meta: Record<string, unknown>;
+};
+
+function decideSandboxPolicy(
+  input: SandboxExecuteRequest,
+  ctx: ToolContext,
+  policy?: SandboxPolicyConfig,
+): SandboxPolicyDecision {
+  const meta: Record<string, unknown> = {
+    role: ctx.role,
+    projectId: ctx.governance?.projectId,
+    mode: input.mode,
+    language: input.mode === 'code' ? input.language : undefined,
+    requestedTimeoutMs: input.timeoutMs,
+    requestedMemoryMb: input.memoryMb,
+    requestedNetworkAccess: input.networkAccess ?? false,
+  };
+  if (!policy) return { allow: true, reason: 'sandbox policy allowed', meta };
+  if (policy.allowedRoles && !policy.allowedRoles.includes(ctx.role)) {
+    return { allow: false, reason: `role "${ctx.role}" is not allowed to execute sandbox workloads`, meta };
+  }
+
+  if (policy.allowedProjectIds) {
+    const projectId = ctx.governance?.projectId;
+    if (!projectId || !policy.allowedProjectIds.includes(projectId)) {
+      return { allow: false, reason: `project "${projectId ?? 'unknown'}" is not allowed to execute sandbox workloads`, meta };
+    }
+  }
+  if (input.mode === 'command' && policy.allowedCommands) {
+    const commandName = extractCommandName(input.command);
+    meta['commandName'] = commandName;
+    if (!commandName) {
+      return { allow: false, reason: 'command must include an executable name', meta };
+    }
+    if (!policy.allowedCommands.includes(commandName)) {
+      return { allow: false, reason: `command "${commandName}" is not allowed by sandbox policy`, meta };
+    }
+  }
+  if (input.mode === 'code' && policy.allowedLanguages && !policy.allowedLanguages.includes(input.language)) {
+    return { allow: false, reason: `language "${input.language}" is not allowed by sandbox policy`, meta };
+  }
+  if (input.timeoutMs !== undefined && policy.maxTimeoutMs !== undefined && input.timeoutMs > policy.maxTimeoutMs) {
+    return { allow: false, reason: `timeoutMs exceeds sandbox policy limit ${policy.maxTimeoutMs}`, meta };
+  }
+  if (input.memoryMb !== undefined && policy.maxMemoryMb !== undefined && input.memoryMb > policy.maxMemoryMb) {
+    return { allow: false, reason: `memoryMb exceeds sandbox policy limit ${policy.maxMemoryMb}`, meta };
+  }
+  if (input.networkAccess === true && policy.allowNetworkAccess !== true) {
+    return { allow: false, reason: 'network access is denied by sandbox policy', meta };
+  }
+  return { allow: true, reason: 'sandbox policy allowed', meta };
+}
+
+async function executeSandboxRequest(
+  request: SandboxExecuteRequest,
+  ctx: ToolContext,
+  capability = 'sandbox.execute',
+): Promise<ToolResult> {
+  const cfg = loadGatewayConfig().sandbox;
+  if (cfg?.enabled === false) return { ok: false, error: 'sandbox runtime is disabled' };
+  const policyDecision = decideSandboxPolicy(request, ctx, cfg?.policy);
+  if (!policyDecision.allow) {
+    return {
+      ok: false,
+      error: policyDecision.reason,
+      auditMeta: {
+        sandbox: {
+          policyDecision: 'deny',
+          policyReason: policyDecision.reason,
+          policy: policyDecision.meta,
+          capability,
+        },
+      },
+    };
+  }
+  const result = await getSandboxRuntime(ctx, capability).execute(request);
+  const success = result.exitCode === 0 && !result.timedOut;
+  return {
+    ok: success,
+    output: {
+      ...result,
+      agentId: ctx.agentId,
+      requestId: ctx.requestId,
+    },
+    error: success
+      ? undefined
+      : `sandbox exited with code ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}`,
+    auditMeta: {
+      sandbox: {
+        runtime: result.runtime,
+        sandboxId: result.sandboxId,
+        policyDecision: 'allow',
+        policyReason: policyDecision.reason,
+        policy: policyDecision.meta,
+        capability,
+        resourceLimits: {
+          timeoutMs: request.timeoutMs !== undefined ? request.timeoutMs : cfg?.timeoutMs,
+          memoryMb: result.metrics.memoryLimitMb,
+        },
+        network: {
+          access: result.metrics.networkAccess,
+          defaultAccess: cfg?.networkAccess ?? false,
+        },
+        filesystem: {
+          access: cfg?.filesystemAccess ?? [],
+        },
+      },
+    },
+  };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function heredocCommand(path: string, content: string): string {
+  let marker = 'AGENTZT_FILE_WRITE';
+  for (let i = 0; content.includes(marker); i++) {
+    marker = `AGENTZT_FILE_WRITE_${i}`;
+  }
+  return `cat > ${shellQuote(path)} <<'${marker}'\n${content}\n${marker}`;
+}
+
 const SANDBOX_TOOLS: Record<string, ToolDef> = {
+  'sandbox.execute': {
+    name: 'sandbox.execute',
+    description: 'Create a Docker sandbox, execute one command or code snippet, return output, then clean it up.',
+    validate: validateSandboxExecute,
+    run: async (a, ctx) => {
+      const request = sandboxExecuteRequest(a);
+      return await executeSandboxRequest(request, ctx);
+    },
+  },
+
   'sandbox.shell': {
     name: 'sandbox.shell',
-    description: 'Execute a shell command in the isolated AIOsandbox environment.',
+    description: 'Execute a shell command through the unified sandbox.execute runtime path.',
     validate: (a) => requireString(a, 'command', 4096),
     run: async (a, ctx) => {
-      const client = await getSandboxClient();
-      const result = await client.shellExec(String(a['command']), a['cwd'] as string | undefined);
-      if (result.success && result.data) {
-        return { ok: result.data.exitCode === 0, output: result.data };
-      }
-      return { ok: false, error: result.error };
+      return await executeSandboxRequest({ mode: 'command', command: String(a['command']) }, ctx, 'sandbox.shell');
     },
   },
 
@@ -91,13 +316,11 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.file.read',
     description: 'Read a file from the AIOsandbox filesystem.',
     validate: (a) => requireString(a, 'file', 4096),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.fileRead(String(a['file']));
-      if (result.success && result.data) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'command',
+        command: `cat ${shellQuote(String(a['file']))}`,
+      }, ctx, 'sandbox.file.read');
     },
   },
 
@@ -105,13 +328,11 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.file.write',
     description: 'Write content to a file in the AIOsandbox filesystem.',
     validate: (a) => requireString(a, 'file', 4096) ?? requireString(a, 'content', 1024 * 1024),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.fileWrite(String(a['file']), String(a['content']));
-      if (result.success) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'command',
+        command: heredocCommand(String(a['file']), String(a['content'])),
+      }, ctx, 'sandbox.file.write');
     },
   },
 
@@ -153,13 +374,12 @@ const SANDBOX_TOOLS: Record<string, ToolDef> = {
     name: 'sandbox.jupyter.execute',
     description: 'Execute Python code in the sandbox Jupyter environment.',
     validate: (a) => requireString(a, 'code', 1024 * 100),
-    run: async (a) => {
-      const client = await getSandboxClient();
-      const result = await client.jupyterExecute(String(a['code']));
-      if (result.success && result.data) {
-        return { ok: true, output: result.data };
-      }
-      return { ok: false, error: result.error };
+    run: async (a, ctx) => {
+      return await executeSandboxRequest({
+        mode: 'code',
+        language: 'python',
+        code: String(a['code']),
+      }, ctx, 'sandbox.jupyter.execute');
     },
   },
 };

@@ -92,10 +92,106 @@
     "channelBinding": true
   },
   "sandbox": {
-    "_comment": "AIOsandbox integration for agent execution. enabled=true enables the sandbox. baseUrl is the AIOsandbox service address. autoStart=true will attempt to start the Docker container automatically.",
+    "_comment": "Sandbox runtime for agent tool execution. runtime=docker uses the local Docker Engine API over dockerSocketPath; runtime=aiosandbox|opensandbox|http calls baseUrl+executePath through the HTTP adapter.",
     "enabled": true,
+    "runtime": "docker",
     "baseUrl": "http://localhost:8080",
-    "autoStart": true
+    "healthPath": "/v1/sandbox/health",
+    "executePath": "/v1/sandbox/execute",
+    "agentPath": "/v1/sandbox/agents",
+    "autoStart": true,
+    "dockerSocketPath": "/var/run/docker.sock",
+    "dockerApiVersion": "v1.41",
+    "defaultImage": "alpine:3.20",
+    "images": {
+      "python": "python:3.11-slim",
+      "javascript": "node:22-alpine",
+      "bash": "bash:5.2"
+    },
+    "timeoutMs": 30000,
+    "maxTimeoutMs": 60000,
+    "memoryMb": 256,
+    "maxMemoryMb": 512,
+    "networkAccess": false,
+    "filesystemAccess": [],
+    "scheduling": {
+      "policy": "capacity"
+    },
+    "runtimes": [
+      {
+        "name": "local-docker",
+        "type": "docker",
+        "enabled": true,
+        "capacity": 1,
+        "priority": 1,
+        "defaultImage": "alpine:3.20",
+        "allowedTenantIds": ["default"],
+        "allowedProjectIds": ["agentzt"],
+        "resources": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "agent.process"],
+        "capabilities": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "agent.process"],
+        "capabilityDeclarations": [
+          { "name": "sandbox.execute", "kind": "execute", "longTasks": false, "sessionReuse": false, "artifacts": false },
+          { "name": "agent.process", "kind": "agent", "longTasks": true, "sessionReuse": true, "artifacts": false }
+        ],
+        "orchestration": { "longTasks": true, "sessionReuse": true, "artifacts": false, "browser": false, "jupyter": true, "mcp": false },
+        "networkPolicy": { "defaultAccess": false, "egress": [] },
+        "filesystemPolicy": { "mounts": [], "readonly": true }
+      },
+      {
+        "name": "aiosandbox-http",
+        "type": "aiosandbox",
+        "enabled": false,
+        "baseUrl": "http://localhost:8080",
+        "healthPath": "/healthz",
+        "executePath": "/v1/shell/exec",
+        "apiKeyEnv": "SANDBOX_API_KEY",
+        "capacity": 10,
+        "priority": 5,
+        "resources": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "sandbox.browser", "sandbox.mcp"],
+        "capabilities": ["sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute", "sandbox.browser", "sandbox.mcp"],
+        "capabilityDeclarations": [
+          { "name": "sandbox.execute", "kind": "execute", "longTasks": true, "sessionReuse": true, "artifacts": true },
+          { "name": "sandbox.jupyter.execute", "kind": "jupyter", "longTasks": true, "sessionReuse": true, "artifacts": true },
+          { "name": "sandbox.browser", "kind": "browser", "longTasks": true, "sessionReuse": true, "artifacts": true },
+          { "name": "sandbox.mcp", "kind": "mcp", "longTasks": true, "sessionReuse": true, "artifacts": true }
+        ],
+        "orchestration": { "longTasks": true, "sessionReuse": true, "artifacts": true, "browser": true, "jupyter": true, "mcp": true }
+      },
+      {
+        "name": "opensandbox-http",
+        "type": "opensandbox",
+        "enabled": false,
+        "baseUrl": "http://localhost:8081",
+        "healthPath": "/v1/health",
+        "agentPath": "/v1/sandboxes",
+        "apiKeyEnv": "OPEN_SANDBOX_API_KEY",
+        "capacity": 10,
+        "priority": 10,
+        "resources": ["agent.process", "sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute"],
+        "capabilities": ["agent.process", "sandbox.execute", "sandbox.shell", "sandbox.file.read", "sandbox.file.write", "sandbox.jupyter.execute"],
+        "capabilityDeclarations": [
+          { "name": "agent.process", "kind": "agent", "longTasks": true, "sessionReuse": true, "artifacts": true },
+          { "name": "sandbox.execute", "kind": "execute", "longTasks": true, "sessionReuse": true, "artifacts": true },
+          { "name": "sandbox.jupyter.execute", "kind": "jupyter", "longTasks": true, "sessionReuse": true, "artifacts": true }
+        ],
+        "orchestration": { "longTasks": true, "sessionReuse": true, "artifacts": true, "browser": false, "jupyter": true, "mcp": false }
+      }
+    ],
+    "modelValidation": {
+      "enabled": false,
+      "highRiskOnly": true,
+      "timeoutMs": 5000,
+      "memoryMb": 64,
+      "networkAccess": false,
+      "highRiskPatterns": ["\\brm\\s+-rf", "\\bcurl\\s+", "\\bwget\\s+", "\\bchmod\\s+", "\\bssh\\s+", "\\bscp\\s+"]
+    },
+    "policy": {
+      "allowedCommands": ["echo", "cat", "ls", "pwd"],
+      "allowedLanguages": ["python", "javascript", "bash"],
+      "maxTimeoutMs": 60000,
+      "maxMemoryMb": 512,
+      "allowNetworkAccess": false
+    }
   },
   "temporal": {
     "_comment": "Temporal REST API integration for durable workflows. Agents can call temporal.workflow.start|signal|query only when RBAC explicitly grants those tools. apiKeyEnv is read only by the gateway.",

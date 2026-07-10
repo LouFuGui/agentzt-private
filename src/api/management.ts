@@ -3,8 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { bearerToken, readJson, sendError, sendJson } from '../shared/http.ts';
 import { AUDIT_DIR } from '../shared/paths.ts';
-import { verifyChain } from '../shared/audit.ts';
-import { loadPolicy, loadRegistry, savePolicy, saveRegistry } from '../shared/config.ts';
+import { AuditLogger, verifyChain } from '../shared/audit.ts';
+import { loadGatewayConfig, loadPolicy, loadRegistry, savePolicy, saveRegistry } from '../shared/config.ts';
 import type {
   AgentLifecycleStatus,
   AgentRegistryEntry,
@@ -14,6 +14,9 @@ import type {
   RolePolicy,
   UserRole,
 } from '../shared/types.ts';
+import type { SandboxAgentCreateRequest, SandboxExecuteRequest } from '../gateway/docker-sandbox.ts';
+import type { SandboxRuntime } from '../gateway/sandbox-runtime.ts';
+import { createSandboxRuntime, describeSandboxRuntimeRegistry } from '../gateway/sandbox-runtime.ts';
 import { getSessionTokenService } from './session.ts';
 
 type AuthContext = {
@@ -37,6 +40,17 @@ const ROLE_RANK: Record<UserRole, number> = {
 };
 
 const AGENT_STATUSES = ['active', 'disabled', 'revoked'] as const;
+const SANDBOX_LIFECYCLE_ACTIONS = {
+  create: 'sandbox.create',
+  start: 'sandbox.start',
+  exec: 'sandbox.exec',
+  stop: 'sandbox.stop',
+  destroy: 'sandbox.destroy',
+} as const;
+let auditLogger: AuditLogger | undefined;
+let auditLoggerFile: string | undefined;
+let sandboxRuntime: SandboxRuntime | undefined;
+let sandboxRuntimeKey: string | undefined;
 
 function roleAtLeast(actual: UserRole, required: UserRole): boolean {
   return ROLE_RANK[actual] >= ROLE_RANK[required];
@@ -105,7 +119,17 @@ function auditEvents(limit: number, filters: AuditFilters = {}): AuditEvent[] {
     const event = JSON.parse(line) as AuditEvent;
     if (matchesAuditFilters(event, filters)) events.push(event);
   }
+
   return events.reverse();
+}
+
+function recordManagementAudit(event: Omit<AuditEvent, 'ts' | 'seq' | 'hash'>): void {
+  const file = resolve(AUDIT_DIR, 'gateway-audit.jsonl');
+  if (!auditLogger || auditLoggerFile !== file) {
+    auditLogger = new AuditLogger(file);
+    auditLoggerFile = file;
+  }
+  auditLogger.record(event);
 }
 
 function projectIds(policy: PolicyDoc): string[] {
@@ -146,6 +170,48 @@ function isAgentStatus(value: unknown): value is AgentLifecycleStatus {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isObject(value) && Object.values(value).every((item) => typeof item === 'string');
+}
+
+function sandboxProjectId(body: Record<string, unknown>): string | undefined | null {
+  const value = body['projectId'];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return value.trim();
+}
+
+function sandboxRuntimeInstance(selection: { tenantId?: string; role?: string; projectId?: string; capability?: string } = {}): SandboxRuntime {
+  const cfg = loadGatewayConfig();
+  const key = sandboxRuntimeCacheKey(cfg, selection);
+  if (!sandboxRuntime || sandboxRuntimeKey !== key) {
+    sandboxRuntime = createSandboxRuntime(cfg.sandbox, selection);
+    sandboxRuntimeKey = key;
+  }
+  return sandboxRuntime;
+}
+
+function sandboxRuntimeCacheKey(
+  cfg: ReturnType<typeof loadGatewayConfig>,
+  selection: { tenantId?: string; role?: string; projectId?: string; capability?: string },
+): string {
+  const sandbox = cfg.sandbox;
+  return [
+    sandbox?.runtime ?? 'docker',
+    sandbox?.baseUrl ?? '',
+    sandbox?.dockerSocketPath ?? '',
+    sandbox?.healthPath ?? '',
+    sandbox?.executePath ?? '',
+    sandbox?.agentPath ?? '',
+    JSON.stringify(sandbox?.runtimes ?? []),
+    sandbox?.scheduling?.policy ?? '',
+    selection.tenantId ?? '',
+    selection.role ?? '',
+    selection.projectId ?? '',
+    selection.capability ?? '',
+  ].join('|');
 }
 
 function isGovernance(value: unknown): value is GovernanceBoundary {
@@ -434,6 +500,297 @@ async function handleAudit(req: IncomingMessage, res: ServerResponse, method: st
   return true;
 }
 
+async function handleSandbox(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
+  if (parts[1] !== 'sandbox') return false;
+  if (method === 'GET' && parts.length === 3 && parts[2] === 'runtimes') {
+    if (!requireRole(req, res, 'viewer')) return true;
+    const url = new URL(req.url ?? '/', 'http://management.local');
+    const cfg = loadGatewayConfig().sandbox;
+    const capability = url.searchParams.get('capability') ?? url.searchParams.get('resource') ?? undefined;
+    const registry = await describeSandboxRuntimeRegistry(cfg, {
+      tenantId: url.searchParams.get('tenantId') ?? undefined,
+      role: url.searchParams.get('role') ?? undefined,
+      projectId: url.searchParams.get('projectId') ?? undefined,
+      resource: url.searchParams.get('resource') ?? undefined,
+      capability,
+    });
+    sendJson(res, 200, {
+      selected: registry.selected?.type ?? cfg?.runtime ?? 'docker',
+      selectedRuntime: registry.selected,
+      scheduling: registry.scheduling,
+      selection: registry.selection,
+      health: registry.health,
+      runtimes: registry.runtimes,
+      defaults: {
+        timeoutMs: cfg?.timeoutMs,
+        memoryMb: cfg?.memoryMb,
+        networkAccess: cfg?.networkAccess ?? false,
+        filesystemAccess: cfg?.filesystemAccess ?? [],
+      },
+    });
+    return true;
+  }
+  if (parts[2] === 'agents') {
+    return await handleSandboxAgents(req, res, method, parts);
+  }
+  if (method !== 'POST' || parts.length !== 3 || parts[2] !== 'execute') return false;
+  const auth = requireRole(req, res, 'admin');
+  if (!auth) return true;
+
+  const body = await readJson<Record<string, unknown>>(req);
+  const projectId = sandboxProjectId(body);
+  if (projectId === null) {
+    sendError(res, 400, 'invalid_request', 'projectId must be a non-empty string when provided');
+    return true;
+  }
+  const governance = projectId ? { projectId } : undefined;
+  const args = isObject(body['arguments']) ? body['arguments'] as Record<string, unknown> : body;
+  const { getTool } = await import('../gateway/tool-registry.ts');
+  const tool = getTool('sandbox.execute');
+  if (!tool) {
+    recordManagementAudit({
+      requestId: `management-sandbox-${Date.now()}`,
+      agentId: `management:${auth.userId}`,
+      role: auth.role,
+      action: 'tool.call',
+      resource: 'sandbox.execute',
+      decision: 'deny',
+      reason: 'sandbox.execute is not implemented',
+      userId: auth.userId,
+      meta: { management: true },
+    });
+    sendError(res, 404, 'not_found', 'sandbox.execute is not implemented');
+    return true;
+  }
+  const validationError = tool.validate(args);
+  if (validationError) {
+    recordManagementAudit({
+      requestId: `management-sandbox-${Date.now()}`,
+      agentId: `management:${auth.userId}`,
+      role: auth.role,
+      action: 'tool.call',
+      resource: 'sandbox.execute',
+      decision: 'deny',
+      reason: `parameter validation failed: ${validationError}`,
+      userId: auth.userId,
+      governance,
+      meta: { management: true },
+    });
+    sendError(res, 400, 'invalid_request', validationError);
+    return true;
+  }
+  const requestId = `management-sandbox-${Date.now()}`;
+  const started = Date.now();
+  const result = await tool.run(args, {
+    agentId: `management:${auth.userId}`,
+    role: auth.role,
+    requestId,
+    governance,
+  });
+  const { auditMeta } = result;
+  const sandboxMeta = auditMeta?.['sandbox'];
+  const policyDecision = isObject(sandboxMeta) ? sandboxMeta['policyDecision'] : undefined;
+  recordManagementAudit({
+    requestId,
+    agentId: `management:${auth.userId}`,
+    role: auth.role,
+    action: 'tool.call',
+    resource: 'sandbox.execute',
+    decision: policyDecision === 'deny' ? 'deny' : 'allow',
+    reason: result.error ?? 'management sandbox execute succeeded',
+    latencyMs: Date.now() - started,
+    userId: auth.userId,
+    governance,
+    meta: {
+      ok: result.ok,
+      authVia: 'management',
+      ...auditMeta,
+    },
+  });
+  const wireResult = { ok: result.ok, output: result.output, error: result.error };
+  sendJson(res, wireResult.ok ? 200 : 400, wireResult);
+  return true;
+}
+
+async function handleSandboxAgents(req: IncomingMessage, res: ServerResponse, method: string, parts: string[]): Promise<boolean> {
+  const auth = requireRole(req, res, 'admin');
+  if (!auth) return true;
+  if (method === 'POST' && parts.length === 3) {
+    const body = await readJson<Record<string, unknown>>(req);
+    const create = sandboxAgentCreateRequest(body);
+    if (typeof create === 'string') {
+      sendError(res, 400, 'invalid_request', create);
+      return true;
+    }
+    const runtime = sandboxRuntimeInstance({ role: auth.role, projectId: create.projectId, capability: 'agent.process' });
+    if (!runtime.createAgent) {
+      sendError(res, 501, 'not_implemented', 'selected sandbox runtime does not support agent lifecycle');
+      return true;
+    }
+    const started = Date.now();
+    const result = await runtime.createAgent(create);
+    recordSandboxLifecycleAudit(auth, 'create', result.sandboxId, 'allow', 'agent sandbox created', Date.now() - started, {
+      runtime: result.runtime,
+      image: result.image,
+      command: result.command,
+      projectId: create.projectId,
+    });
+    sendJson(res, 201, result);
+    return true;
+  }
+  if (parts.length !== 5 || method !== 'POST') return false;
+  const sandboxId = parts[3] ?? '';
+  const operation = parts[4] ?? '';
+  const started = Date.now();
+  try {
+    const runtime = sandboxRuntimeInstance({ role: auth.role, capability: 'agent.process' });
+    if (operation === 'start') {
+      if (!runtime.startAgent) throw new Error('selected sandbox runtime does not support start');
+      const result = await runtime.startAgent(sandboxId);
+      recordSandboxLifecycleAudit(auth, 'start', sandboxId, 'allow', 'agent sandbox started', Date.now() - started, result);
+      sendJson(res, 200, result);
+      return true;
+    }
+    if (operation === 'exec') {
+      if (!runtime.execAgent) throw new Error('selected sandbox runtime does not support exec');
+      const body = await readJson<Record<string, unknown>>(req);
+      const input = sandboxExecuteRequest(body);
+      if (typeof input === 'string') {
+        sendError(res, 400, 'invalid_request', input);
+        return true;
+      }
+      const result = await runtime.execAgent(sandboxId, input);
+      recordSandboxLifecycleAudit(auth, 'exec', sandboxId, result.exitCode === 0 ? 'allow' : 'deny', 'agent sandbox exec completed', Date.now() - started, {
+        runtime: result.runtime,
+        mode: result.mode,
+        language: result.language,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+      });
+      sendJson(res, result.exitCode === 0 ? 200 : 400, result);
+      return true;
+    }
+    if (operation === 'stop') {
+      if (!runtime.stopAgent) throw new Error('selected sandbox runtime does not support stop');
+      const result = await runtime.stopAgent(sandboxId);
+      recordSandboxLifecycleAudit(auth, 'stop', sandboxId, 'allow', 'agent sandbox stopped', Date.now() - started, result);
+      sendJson(res, 200, result);
+      return true;
+    }
+    if (operation === 'destroy') {
+      if (!runtime.destroyAgent) throw new Error('selected sandbox runtime does not support destroy');
+      const result = await runtime.destroyAgent(sandboxId);
+      recordSandboxLifecycleAudit(auth, 'destroy', sandboxId, 'allow', 'agent sandbox destroyed', Date.now() - started, result);
+      sendJson(res, 200, result);
+      return true;
+    }
+  } catch (err) {
+    recordSandboxLifecycleAudit(auth, operation, sandboxId, 'deny', (err as Error).message, Date.now() - started);
+    sendError(res, 400, 'sandbox_error', (err as Error).message);
+    return true;
+  }
+  return false;
+}
+
+function recordSandboxLifecycleAudit(
+  auth: AuthContext,
+  operation: string,
+  sandboxId: string,
+  decision: 'allow' | 'deny',
+  reason: string,
+  latencyMs?: number,
+  meta: Record<string, unknown> = {},
+): void {
+  const action = sandboxLifecycleAction(operation);
+  recordManagementAudit({
+    requestId: `management-sandbox-${operation}-${Date.now()}`,
+    agentId: `management:${auth.userId}`,
+    role: auth.role,
+    action,
+    resource: 'agent.process',
+    decision,
+    reason,
+    latencyMs,
+    userId: auth.userId,
+    meta: {
+      authVia: 'management',
+      sandboxId,
+      lifecycle: true,
+      operation,
+      ...meta,
+    },
+  });
+}
+
+function sandboxLifecycleAction(operation: string): 'sandbox.create' | 'sandbox.start' | 'sandbox.exec' | 'sandbox.stop' | 'sandbox.destroy' {
+  if (operation in SANDBOX_LIFECYCLE_ACTIONS) {
+    return SANDBOX_LIFECYCLE_ACTIONS[operation as keyof typeof SANDBOX_LIFECYCLE_ACTIONS];
+  }
+  throw new Error(`unknown sandbox lifecycle operation "${operation}"`);
+}
+
+function sandboxAgentCreateRequest(body: Record<string, unknown>): SandboxAgentCreateRequest | string {
+  if (body['image'] !== undefined && typeof body['image'] !== 'string') return 'image must be a string';
+  if (body['command'] !== undefined && typeof body['command'] !== 'string') return 'command must be a string';
+  if (body['networkAccess'] !== undefined && typeof body['networkAccess'] !== 'boolean') return 'networkAccess must be a boolean';
+  if (body['memoryMb'] !== undefined && (!Number.isInteger(body['memoryMb']) || Number(body['memoryMb']) <= 0)) {
+    return 'memoryMb must be a positive integer';
+  }
+  if (body['timeoutMs'] !== undefined && (!Number.isInteger(body['timeoutMs']) || Number(body['timeoutMs']) <= 0)) {
+    return 'timeoutMs must be a positive integer';
+  }
+  if (body['env'] !== undefined && !isStringRecord(body['env'])) return 'env must be a string map';
+  if (body['mounts'] !== undefined && !validMounts(body['mounts'])) return 'mounts must contain source and target strings';
+  const projectId = sandboxProjectId(body);
+  if (projectId === null) return 'projectId must be a non-empty string when provided';
+  return {
+    image: body['image'] as string | undefined,
+    command: body['command'] as string | undefined,
+    timeoutMs: body['timeoutMs'] as number | undefined,
+    memoryMb: body['memoryMb'] as number | undefined,
+    networkAccess: body['networkAccess'] as boolean | undefined,
+    env: body['env'] as Record<string, string> | undefined,
+    mounts: body['mounts'] as SandboxAgentCreateRequest['mounts'],
+    projectId: projectId ?? undefined,
+    agentId: typeof body['agentId'] === 'string' ? body['agentId'] : undefined,
+  };
+}
+
+function validMounts(value: unknown): value is SandboxAgentCreateRequest['mounts'] {
+  return Array.isArray(value) && value.every((mount) =>
+    isObject(mount)
+    && typeof mount['source'] === 'string'
+    && typeof mount['target'] === 'string'
+    && (mount['readonly'] === undefined || typeof mount['readonly'] === 'boolean'));
+}
+
+function sandboxExecuteRequest(body: Record<string, unknown>): SandboxExecuteRequest | string {
+  const mode = body['mode'] ?? (body['command'] !== undefined ? 'command' : 'code');
+  if (mode !== 'command' && mode !== 'code') return 'mode must be "command" or "code"';
+  if (mode === 'command') {
+    if (typeof body['command'] !== 'string' || body['command'].trim() === '') return 'command must be a non-empty string';
+    return {
+      mode: 'command',
+      command: body['command'],
+      timeoutMs: body['timeoutMs'] as number | undefined,
+      memoryMb: body['memoryMb'] as number | undefined,
+      networkAccess: body['networkAccess'] as boolean | undefined,
+    };
+  }
+  if (typeof body['code'] !== 'string' || body['code'].trim() === '') return 'code must be a non-empty string';
+  if (body['language'] !== 'python' && body['language'] !== 'javascript' && body['language'] !== 'bash') {
+    return 'language must be python, javascript, or bash';
+  }
+  return {
+    mode: 'code',
+    language: body['language'],
+    code: body['code'],
+    timeoutMs: body['timeoutMs'] as number | undefined,
+    memoryMb: body['memoryMb'] as number | undefined,
+    networkAccess: body['networkAccess'] as boolean | undefined,
+  };
+}
+
 export async function routeManagementApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const parts = managementParts(req);
   if (parts[0] !== 'api') return false;
@@ -442,5 +799,6 @@ export async function routeManagementApi(req: IncomingMessage, res: ServerRespon
     || await handleAgents(req, res, method, parts)
     || await handleRoles(req, res, method, parts)
     || await handlePolicy(req, res, method, parts)
-    || await handleAudit(req, res, method, parts);
+    || await handleAudit(req, res, method, parts)
+    || await handleSandbox(req, res, method, parts);
 }

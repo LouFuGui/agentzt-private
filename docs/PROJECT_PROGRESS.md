@@ -124,3 +124,85 @@
   - 可部署到企业内网：`compose.yml` 覆盖单机/内网 Compose，`deploy/kubernetes/` 覆盖集群 ConfigMap、Deployment、Service、PVC。
   - 交付物完整：Dockerfile、Compose、Kubernetes manifests、offline deployment docs 均已落地，并有 deployment 静态测试保护。
 - 对照总计划书首版产品边界，Milestone 1-5 均已有最小闭环；后续如继续演进，应进入新的增强阶段，而不是 Milestone 5 的阻塞缺口。
+
+## 2026-07-09
+
+### 第二版计划书需求引导启动
+
+- 用户确认第二版项目计划书希望更多围绕“智能体沙盒”方向推进，因为用户主要负责该方向。
+- 用户当前已有可用的沙盒运行时 Docker，并且比较了解 AIOsandbox 与 opensandbox。
+- 当前引导重点应从“AgentZT 如何把沙盒运行时纳入零信任控制面”继续收敛，包括沙盒接入位置、运行时抽象、权限模型、审计范围、网络/文件系统隔离、工具执行策略与首个可交付闭环。
+- 用户确认第二版首阶段先做“5 + 1”：先接入现有 Docker 沙盒 runtime，跑通“创建沙盒 → 执行命令/代码 → 返回结果 → 审计”的最小闭环，同时优先覆盖 Agent 工具执行沙盒；之后再扩展到更全面的 Agent 运行沙盒和企业沙盒编排平台。
+- 用户说明当前使用 AIOsandbox 和 opensandbox，并确认沙盒 runtime 接入方式应优先按 HTTP API 服务理解：AgentZT Gateway 通过 REST/HTTP adapter 调用外部沙盒服务，而不是直接 shell out 到 Docker CLI 或引入运行时依赖。
+- 用户确认首版工具执行沙盒接口选择统一 `sandbox.execute`：同一接口内支持 `command` 与 `code` 两种最小执行请求，后续再扩展文件上传、长任务、会话复用等能力。
+- 用户确认沙盒安全策略选择“全部都要，但分阶段做”：网络策略、文件系统策略、资源限制、命令/语言白名单与审计都应纳入第二版计划；首个开发闭环建议优先落地资源限制、完整审计与基础网络默认禁用。
+- 用户确认首版 `sandbox.execute` 同时需要两个入口：管理 API 调试入口（例如 `/api/v1/sandbox/execute`）与 Agent 工具调用入口（例如 `/v1/tools/sandbox.execute`）；前者用于管理员/控制台调试，后者用于 Agent 通过 token 正式调用。
+- 用户确认 `sandbox.execute` 权限控制选择“全部都要，分阶段做”：按 role、project、命令/语言与资源额度控制都应纳入第二版计划；首个开发闭环建议先做 role 是否允许 `sandbox.execute` 与资源上限，再扩展命令/语言白名单和 project 级策略。
+
+### 智能体沙盒 MVP 开发启动
+
+- 本轮用户再次强调“工具执行沙盒、Agent 运行沙盒、模型访问前后安全沙盒、企业沙盒编排平台”是主线，其中首要交付仍是最小闭环：只接入现有 Docker 沙盒 runtime，跑通“创建沙盒 → 执行命令/代码 → 返回结果 → 审计”。
+- 首批实现聚焦 Agent 工具入口 `sandbox.execute`：通过 Gateway 既有 `/v1/tools/{name}` 路径进入 RBAC/ABAC/OPA/审计链，工具内部使用 Docker Engine HTTP API 创建一次性容器执行 command/code，默认禁用网络并施加超时与内存上限。
+- 后续仍需补齐管理 API 调试入口、命令/语言白名单、project 级策略、长任务/会话复用、文件处理与 AIOsandbox/opensandbox 编排适配。
+
+### 智能体沙盒 Runtime 抽象与策略补强
+
+- 本轮按“实施计划”推进首批最小代码闭环：
+  - 新增统一 `SandboxRuntime` adapter 抽象，现有 Docker 执行路径改为 `docker` runtime adapter。
+  - 新增通用 HTTP sandbox runtime adapter，支持 `aiosandbox` / `opensandbox` / `http` 通过 `baseUrl + executePath` 接入外部沙盒服务，首版只覆盖 `execute` 能力。
+  - `sandbox.execute` 继续作为 Agent 工具统一入口，并复用管理 API 调试入口 `/api/v1/sandbox/execute`。
+  - Gateway sandbox 配置新增 `executePath`、`filesystemAccess` 与 `policy`，首批策略覆盖命令白名单、语言白名单、资源上限、网络开关，并保留后续 role/project 细粒度控制字段。
+  - `tool.call` 审计 meta 扩展记录 sandbox runtime、sandboxId、policy decision、资源限制、网络 posture 与文件系统 posture。
+- 新增/补强测试覆盖：
+  - Docker runtime adapter 继续覆盖 create/start/wait/logs/remove 路径。
+  - HTTP runtime adapter 覆盖 OpenSandbox/AIOsandbox-style execute 调用。
+  - Agent 工具入口覆盖审计 meta。
+  - sandbox policy 拒绝命令时不触发 runtime 执行。
+- 本轮针对性验证：`npx vitest run tests/gateway/sandbox.test.ts tests/api/management.test.ts` 通过，`npm run typecheck` 通过。
+
+### 智能体沙盒管理调试审计补齐
+
+- 本轮继续推进 sandbox.execute 最小闭环的审计一致性：
+  - 管理 API 调试入口 `/api/v1/sandbox/execute` 现在会将执行结果写入 gateway audit hash chain。
+  - 审计记录复用 `tool.call` / `sandbox.execute` 资源维度，并标记 `authVia: management`、管理用户 ID、执行结果与 sandbox audit meta。
+  - 补充管理 API 测试，验证管理员调试执行会落审计日志，便于后续控制台调试与 Agent 工具调用在同一审计视图中追踪。
+
+### 智能体沙盒编排继续推进
+
+- 当前状态判断：工具执行沙盒、管理调试入口、Docker/HTTP runtime adapter、命令/语言/project/资源策略与审计已经具备首版闭环；完整企业沙盒编排平台此前尚未全部实现。
+- 本轮继续补齐下一层能力：
+  - `SandboxRuntime` 扩展健康检查与 Agent process sandbox 生命周期 adapter：create/start/exec/stop/destroy。
+  - Docker runtime 增加本地 Agent process sandbox 生命周期实现；HTTP runtime 增加 AIOsandbox/OpenSandbox 风格生命周期路径适配。
+  - 管理 API 新增 `/api/v1/sandbox/runtimes` 健康/registry 调试入口，以及 `/api/v1/sandbox/agents` Agent 沙盒创建、启动、执行、停止、销毁入口。
+  - 审计事件从单次 `tool.call` 扩展到 `sandbox.create`、`sandbox.start`、`sandbox.exec`、`sandbox.stop`、`sandbox.destroy`。
+  - Gateway 模型调用路径新增可选 `sandbox.modelValidation`：在 guardrail 后、upstream 前对输入中的高风险代码/命令做 dry-run/语法验证；模型输出后也可二次验证并在失败时替换响应。
+  - `config/gateway.json` 增加 runtime registry 示例、health/agent 路径与模型沙盒验证默认配置。
+- 当前仍属于“控制面最小编排”而非完整平台：容量调度、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明仍是后续增强方向。
+
+### 智能体沙盒收敛补强
+
+- 本轮对照“工具执行沙盒优先收敛、多 sandbox runtime、Agent 运行沙盒、模型访问前后安全沙盒、企业沙盒编排平台”复核后继续补齐：
+  - AIO Sandbox 适配改为使用其公开 `/v1/*` API 约定，`sandbox.execute` 在 `aiosandbox` runtime 下会调用 `/v1/shell/exec`，Python code 调用 `/v1/jupyter/execute`。
+  - OpenSandbox 适配新增 lifecycle-native `POST /v1/sandboxes`、`resume`、`pause`、`DELETE /v1/sandboxes/{id}` 路径，用于 Agent process sandbox 控制面管理。
+  - Runtime registry 开始参与选择：按 enabled provider、runtime 类型/名称、project/role/capability 约束与 capacity 排序选择具体 runtime provider。
+  - `sandbox.shell`、`sandbox.file.read`、`sandbox.file.write`、`sandbox.jupyter.execute` 逐步收敛到统一 `sandbox.execute` policy/runtime helper，不再绕过沙盒策略与统一审计 meta。
+  - `config/gateway.json` 的 runtime registry 示例补充 AIO Sandbox/OpenSandbox API key env、capabilities、networkPolicy、filesystemPolicy 与 project 选择示例。
+- 当前仍未宣称完成完整企业沙盒平台：OpenSandbox execd 流式 command/file/code、长任务会话复用、文件工件、浏览器/Jupyter/MCP runtime 能力声明与调度状态持久化仍可继续增强。
+
+### 企业沙盒编排平台推进
+
+- 本轮继续把 AgentZT 作为沙盒控制面推进到“registry + 调度元数据”层：
+  - `SandboxRuntimeProviderConfig` 增加 `tenant`、`project`、`role`、`resource` 选择维度，补充 `priority` 与全局 `scheduling.policy`，使 provider 选择可按容量或优先级调度。
+  - 管理 API `/api/v1/sandbox/runtimes` 支持通过 query 传入 `tenantId`、`role`、`projectId`、`resource/capability` 查看过滤后的 registry 决策，返回 selected provider、eligible/reason、health 与调度策略。
+  - runtime registry 配置增加 OpenSandbox 式能力声明：长任务、会话复用、文件工件、浏览器、Jupyter、MCP 等作为 provider capability/orchestration metadata 暴露，先完成控制面声明与选择，不声称已经实现所有 runtime 能力。
+- 下一步建议进入真正 stateful 编排：健康快照缓存、provider failure counter、sessionId 到 sandbox/container 绑定、长任务状态机、artifact 元数据与 TTL 清理。
+
+### Web 控制台沙盒攻防演示增强
+
+- 用户提出需要“更完整 Web UI”，并且最终要能演示沙盒作用：未加沙盒前受到攻击是什么样，加沙盒后受到攻击是什么样。
+- 本轮在现有无依赖、无构建步骤的 Web Console 中新增 Sandbox Demo 页签：
+  - 左侧以安全模拟方式展示未沙盒化工具路径遇到攻击时的影响，不在宿主机真实执行危险命令。
+  - 右侧将同一攻击 payload 送入管理调试入口 `/api/v1/sandbox/execute`，展示 AgentZT sandbox policy、默认禁网、资源限制、runtime 输出与失败/阻断结果。
+  - 页面同时展示 `/api/v1/sandbox/runtimes` 返回的 runtime posture，便于讲解 Docker/AIOsandbox/OpenSandbox provider 选择、health、capability 与默认隔离策略。
+  - 演示场景首批覆盖 secret exfiltration、destructive filesystem command、unexpected network callback，并保留 safe workload 按钮用于确认沙盒正常执行路径。
+- 新增 console 静态测试契约，保护 Sandbox Demo 页签、sandbox API 调用、unsafe simulation 文案和样式入口。
