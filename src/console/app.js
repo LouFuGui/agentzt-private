@@ -9,6 +9,7 @@ const consolePanel = document.querySelector('#console-panel');
 const logout = document.querySelector('#logout');
 const sandboxForm = document.querySelector('#sandbox-demo-form');
 const attackScenario = document.querySelector('#attack-scenario');
+const DEFAULT_SANDBOX_SCENARIO = 'exfiltrate';
 
 // Demo payloads are intentionally fictional; the "before sandbox" path only renders impact text.
 const sandboxDemoScenarios = {
@@ -93,7 +94,11 @@ function parseJsonField(value, fallback) {
 }
 
 function currentSandboxScenario() {
-  return sandboxDemoScenarios[attackScenario.value] || sandboxDemoScenarios.exfiltrate;
+  const scenario = sandboxDemoScenarios[attackScenario.value]
+    || sandboxDemoScenarios[DEFAULT_SANDBOX_SCENARIO]
+    || Object.values(sandboxDemoScenarios)[0];
+  if (!scenario) throw new Error('No sandbox demo scenarios configured');
+  return scenario;
 }
 
 function showConsole(show) {
