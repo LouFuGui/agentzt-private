@@ -55,7 +55,16 @@ function removeRoot(root: string): void {
   });
 }
 
-afterEach(() => {
+afterEach(async () => {
+  // Close singletons that hold open file handles before removing temp dirs.
+  // On Windows, an open SQLite DatabaseSync handle (apps.db) causes EPERM when
+  // rmSync tries to delete the parent temp directory.
+  const { resetAppStore } = await import('../../src/api/app-store.ts');
+  const { resetSessionTokenService } = await import('../../src/api/session.ts');
+
+  resetSessionTokenService();
+  resetAppStore();
+
   for (const root of roots.splice(0)) {
     removeRoot(root);
   }
