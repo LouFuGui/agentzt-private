@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
-import { OpaClient, resolveOpaConfig } from '../../src/gateway/opa-client.ts';
+import { OpaClient, resolveOpaConfig, sanitizeForOpa } from '../../src/gateway/opa-client.ts';
 
 function withOpa(handler: (body: any) => unknown) {
   return new Promise<{ url: string; seen: any[]; close: () => void }>((resolve) => {
@@ -94,5 +94,104 @@ describe('OPA client', () => {
       timeoutMs: 500,
       failOpen: false,
     })?.baseUrl).toBe('http://opa:8181');
+  });
+
+  it('posts request.arguments when present in the input', async () => {
+    const opa = await withOpa(() => ({ allow: true, reason: 'rego allow' }));
+    try {
+      const client = new OpaClient({
+        enabled: true,
+        baseUrl: opa.url,
+        policyPath: 'agentzt/authz/decision',
+        timeoutMs: 1000,
+        failOpen: false,
+      });
+      const inputWithArgs = {
+        ...input,
+        request: { arguments: { query: 'zero trust telemetry' } },
+      };
+      await client.decide(inputWithArgs);
+      expect(opa.seen[0].body.input.request.arguments.query).toBe('zero trust telemetry');
+    } finally {
+      opa.close();
+    }
+  });
+
+  it('sanitizeForOpa redacts sensitive keys and preserves non-sensitive scalars', () => {
+    const raw = {
+      query: 'zero trust',
+      password: 'hunter2',
+      secret: 's3cr3t',
+      token: 'tok-abc',
+      apiKey: 'sk-123',
+      api_key: 'sk-456',
+      authorization: '******',
+      credential: 'cred',
+      key: 'private-key-value',
+      nested: {
+        host: 'example.com',
+        secret: 'nested-secret',
+      },
+    };
+    const sanitized = sanitizeForOpa(raw) as Record<string, unknown>;
+
+    // Non-sensitive values are preserved.
+    expect(sanitized['query']).toBe('zero trust');
+    expect((sanitized['nested'] as Record<string, unknown>)['host']).toBe('example.com');
+
+    // Sensitive keys at all depths are redacted.
+    expect(sanitized['password']).toBe('[redacted]');
+    expect(sanitized['secret']).toBe('[redacted]');
+    expect(sanitized['token']).toBe('[redacted]');
+    expect(sanitized['apiKey']).toBe('[redacted]');
+    expect(sanitized['api_key']).toBe('[redacted]');
+    expect(sanitized['authorization']).toBe('[redacted]');
+    expect(sanitized['credential']).toBe('[redacted]');
+    expect(sanitized['key']).toBe('[redacted]');
+    expect((sanitized['nested'] as Record<string, unknown>)['secret']).toBe('[redacted]');
+  });
+
+  it('sanitizeForOpa truncates long strings', () => {
+    const long = 'x'.repeat(300);
+    const result = sanitizeForOpa(long) as string;
+    expect(result.length).toBeLessThan(300);
+    expect(result).toContain('…');
+  });
+
+  it('OpaClient can deny based on tool query argument via Rego-like policy', async () => {
+    // Simulate a Rego policy that denies when query contains 'opa-block'.
+    const opa = await withOpa((body: any) => {
+      const query = body?.input?.request?.arguments?.query ?? '';
+      if (typeof query === 'string' && query.includes('opa-block')) {
+        return { allow: false, reason: 'query blocked by policy' };
+      }
+      return { allow: true, reason: 'rego allow' };
+    });
+    try {
+      const client = new OpaClient({
+        enabled: true,
+        baseUrl: opa.url,
+        policyPath: 'agentzt/authz/decision',
+        timeoutMs: 1000,
+        failOpen: false,
+      });
+
+      // Normal query is allowed.
+      const allow = await client.decide({
+        ...input,
+        request: { arguments: { query: 'normal zero trust telemetry' } },
+      });
+      expect(allow.allow).toBe(true);
+
+      // Blocked query is denied with the Rego reason.
+      const deny = await client.decide({
+        ...input,
+        request: { arguments: { query: 'opa-block zero trust telemetry' } },
+      });
+      expect(deny.allow).toBe(false);
+      expect(deny.reason).toBe('query blocked by policy');
+    } finally {
+      opa.close();
+    }
   });
 });
